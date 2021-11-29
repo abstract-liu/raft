@@ -17,7 +17,12 @@ package raft
 //   in the same server.
 //
 
-import "sync"
+import (
+	"fmt"
+	"math/rand"
+	"sync"
+	"time"
+)
 import "sync/atomic"
 import "../labrpc"
 
@@ -43,6 +48,14 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+type RaftRole int
+
+const(
+	Leader = iota
+	Follower
+	Candidate
+)
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -56,6 +69,26 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+
+	//election state
+	lastHeartTime time.Time
+	role          RaftRole
+
+	//persistent state on all servers
+	currentTerm int
+	votedFor int
+	log []Log
+
+	//volatile state on all servers
+	commitIndex int
+	lastApplied int
+
+	//volatile state on leaders
+	nextIndex []int
+	matchIndex []int
+}
+
+type Log struct {
 
 }
 
@@ -117,6 +150,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	Term int
+	CandidateId int
+	LastLogIndex int
+	LastLogTerm int
 }
 
 //
@@ -125,6 +162,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	Term int
+	VoteGranted bool
 }
 
 //
@@ -234,10 +273,55 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	rf.currentTerm = 0
+	rf.votedFor = -1
+	rf.role = Follower
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+	go rf.feelHeart()
 
 	return rf
 }
+
+
+func (rf *Raft) feelHeart() {
+	for {
+		fmt.Println("start new epoch election")
+		electionTime := rand.Intn(100)
+		nowTime := time.Now()
+		time.Sleep(time.Duration(electionTime) * time.Millisecond)
+
+		rf.mu.Lock()
+		if rf.lastHeartTime.Before(nowTime) {
+			rf.role = Candidate
+			rf.currentTerm += 1
+			rf.votedFor = rf.me
+
+			go rf.requestVote()
+		}
+		rf.mu.Unlock()
+	}
+}
+
+func (rf *Raft) requestVote(){
+	voteNum := 0
+	for peer := range rf.peers{
+		go func(server int){
+			args := RequestVoteArgs{}
+			reply := RequestVoteReply{}
+			resp := rf.sendRequestVote(server, &args, &reply)
+
+			if(resp){
+				voteNum += 1
+				fmt.Println(voteNum)
+			}
+		}(peer)
+	}
+}
+
+type AppendEntriy struct {
+
+}
+
