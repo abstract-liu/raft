@@ -18,7 +18,7 @@ package raft
 //
 
 import (
-	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -89,7 +89,7 @@ type Raft struct {
 }
 
 type Log struct {
-
+	term int
 }
 
 // return currentTerm and whether this server
@@ -171,6 +171,17 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	log.Printf("server %d receive vote request from %+v, and server term %d voteFor %d", rf.me, args, rf.currentTerm, rf.votedFor)
+	if args.Term < rf.currentTerm {
+		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
+		return
+	}
+
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+		rf.votedFor = args.CandidateId
+		reply.VoteGranted = true
+	}
 }
 
 //
@@ -285,11 +296,39 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	return rf
 }
 
+func (rf *Raft) startVote(){
+	voteNum := 0
+	log.Printf("server %d start voting now", rf.me)
+	for peer := range rf.peers{
+		go func(server int){
+			//logLen := len(rf.log)
+			args := RequestVoteArgs{Term: rf.currentTerm, CandidateId: rf.me}
+			reply := RequestVoteReply{}
+			resp := rf.sendRequestVote(server, &args, &reply)
+
+			if resp && reply.VoteGranted {
+				log.Printf("server %d receive a vote from server %d", rf.me, server)
+				voteNum += 1
+				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
+					rf.role = Leader
+					log.Printf("server %d successive become a leader", rf.me)
+					go rf.startLeaderControl()
+				}
+			}
+		}(peer)
+	}
+}
+
+func (rf *Raft) startLeaderControl(){
+	log.Printf("server %d start sending heartbeat package", rf.me)
+	for peer := range rf.peers {
+		rf.sendHeart(peer)
+	}
+}
 
 func (rf *Raft) feelHeart() {
 	for {
-		fmt.Println("start new epoch election")
-		electionTime := rand.Intn(100)
+		electionTime := rand.Intn(100) + 300
 		nowTime := time.Now()
 		time.Sleep(time.Duration(electionTime) * time.Millisecond)
 
@@ -299,29 +338,52 @@ func (rf *Raft) feelHeart() {
 			rf.currentTerm += 1
 			rf.votedFor = rf.me
 
-			go rf.requestVote()
+			go rf.startVote()
 		}
 		rf.mu.Unlock()
 	}
 }
 
-func (rf *Raft) requestVote(){
-	voteNum := 0
-	for peer := range rf.peers{
-		go func(server int){
-			args := RequestVoteArgs{}
-			reply := RequestVoteReply{}
-			resp := rf.sendRequestVote(server, &args, &reply)
-
-			if(resp){
-				voteNum += 1
-				fmt.Println(voteNum)
-			}
-		}(peer)
+func (rf *Raft) sendHeart(server int){
+	for {
+		args := EntityArgs{Term: rf.currentTerm, LeaderId: rf.me, Entities: nil}
+		reply := EntityReply{}
+		rf.sendRequestEntity(server, &args, &reply)
+		time.Sleep(time.Duration(50) * time.Millisecond)
 	}
 }
 
-type AppendEntriy struct {
+
+
+
+type EntityReply struct {
+	Term int
+	Success bool
+}
+
+type EntityArgs struct {
+	Term int
+	LeaderId int
+	PrevLogIndex int
+	PrevLogTerm int
+	Entities []Entity
+	LeaderCommit int
+}
+
+type Entity struct {
 
 }
 
+func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
+	if args.Entities == nil {
+		log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
+		rf.mu.Lock()
+		rf.lastHeartTime = time.Now()
+		rf.mu.Unlock()
+	}
+}
+
+func (rf *Raft) sendRequestEntity(server int, args *EntityArgs, reply *EntityReply) bool {
+	ok := rf.peers[server].Call("Raft.RequestEntity", args, reply)
+	return ok
+}
