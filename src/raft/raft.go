@@ -174,7 +174,7 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	log.Printf("server %d receive vote request from %+v, and server term %d voteFor %d", rf.me, args, rf.currentTerm, rf.votedFor)
+	//log.Printf("server %d receive vote request from %+v, and server term %d voteFor %d", rf.me, args, rf.currentTerm, rf.votedFor)
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
@@ -188,7 +188,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
-		log.Printf("server %d grant vote to %d", rf.me, rf.votedFor)
+		//log.Printf("server %d grant vote to %d", rf.me, rf.votedFor)
 	}
 }
 
@@ -306,7 +306,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) startVote(){
 	voteNum := 0
-	log.Printf("server %d pass election time, and start voting now", rf.me)
+	//log.Printf("server %d pass election time, and start voting now", rf.me)
 	for peer := range rf.peers{
 		go func(server int){
 			args := RequestVoteArgs{Term: rf.currentTerm, CandidateId: rf.me}
@@ -318,7 +318,7 @@ func (rf *Raft) startVote(){
 			}
 
 			if reply.VoteGranted {
-				log.Printf("server %d receive a vote from server %d", rf.me, server)
+				//log.Printf("server %d receive a vote from server %d", rf.me, server)
 				voteNum += 1
 				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
 					rf.role = Leader
@@ -336,7 +336,7 @@ func (rf *Raft) startVote(){
 }
 
 func (rf *Raft) startLeaderControl(){
-	log.Printf("server %d start sending heartbeat package", rf.me)
+	//log.Printf("server %d start sending heartbeat package", rf.me)
 	for peer := range rf.peers {
 		go rf.sendHeart(peer)
 	}
@@ -402,7 +402,7 @@ type Entity struct {
 
 func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	if args.Entities == nil {
-		log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
+		//log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
 		rf.mu.Lock()
 		rf.lastHeartTime = time.Now()
 		if args.Term > rf.currentTerm {
