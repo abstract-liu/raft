@@ -247,8 +247,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
-
+	isLeader = rf.role == Leader
+	term = rf.currentTerm
 	return index, term, isLeader
 }
 
@@ -405,7 +405,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 		log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
 		rf.mu.Lock()
 		rf.lastHeartTime = time.Now()
-		if args.Term >= rf.currentTerm && args.LeaderId != rf.me{
+		if args.Term > rf.currentTerm {
 			rf.role = Follower
 			rf.currentTerm = args.Term
 		}
