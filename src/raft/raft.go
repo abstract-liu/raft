@@ -99,6 +99,9 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+	term = rf.currentTerm
+	isleader = rf.role == Leader
+
 	return term, isleader
 }
 
@@ -176,11 +179,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
 		return
+	} else if args.Term > rf.currentTerm {
+		rf.role = Follower
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
+		log.Printf("server %d grant vote to %d", rf.me, rf.votedFor)
 	}
 }
 
@@ -298,21 +306,28 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) startVote(){
 	voteNum := 0
-	log.Printf("server %d start voting now", rf.me)
+	log.Printf("server %d pass election time, and start voting now", rf.me)
 	for peer := range rf.peers{
 		go func(server int){
-			//logLen := len(rf.log)
 			args := RequestVoteArgs{Term: rf.currentTerm, CandidateId: rf.me}
 			reply := RequestVoteReply{}
 			resp := rf.sendRequestVote(server, &args, &reply)
 
-			if resp && reply.VoteGranted {
+			if !resp {
+				return
+			}
+
+			if reply.VoteGranted {
 				log.Printf("server %d receive a vote from server %d", rf.me, server)
 				voteNum += 1
 				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
 					rf.role = Leader
 					log.Printf("server %d successive become a leader", rf.me)
 					go rf.startLeaderControl()
+				}
+			} else {
+				if reply.Term > rf.currentTerm {
+					rf.currentTerm = reply.Term
 				}
 			}
 		}(peer)
@@ -322,13 +337,13 @@ func (rf *Raft) startVote(){
 func (rf *Raft) startLeaderControl(){
 	log.Printf("server %d start sending heartbeat package", rf.me)
 	for peer := range rf.peers {
-		rf.sendHeart(peer)
+		go rf.sendHeart(peer)
 	}
 }
 
 func (rf *Raft) feelHeart() {
 	for {
-		electionTime := rand.Intn(100) + 300
+		electionTime := rand.Intn(500) + 300
 		nowTime := time.Now()
 		time.Sleep(time.Duration(electionTime) * time.Millisecond)
 
@@ -337,6 +352,7 @@ func (rf *Raft) feelHeart() {
 			rf.role = Candidate
 			rf.currentTerm += 1
 			rf.votedFor = rf.me
+			rf.lastHeartTime = time.Now()
 
 			go rf.startVote()
 		}
@@ -346,10 +362,18 @@ func (rf *Raft) feelHeart() {
 
 func (rf *Raft) sendHeart(server int){
 	for {
+		if rf.role != Leader {
+			return
+		}
 		args := EntityArgs{Term: rf.currentTerm, LeaderId: rf.me, Entities: nil}
 		reply := EntityReply{}
-		rf.sendRequestEntity(server, &args, &reply)
-		time.Sleep(time.Duration(50) * time.Millisecond)
+		ok := rf.sendRequestEntity(server, &args, &reply)
+		if ok {
+			if reply.Term > rf.currentTerm {
+				rf.currentTerm = reply.Term
+			}
+		}
+		time.Sleep(time.Duration(200) * time.Millisecond)
 	}
 }
 
@@ -379,6 +403,13 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 		log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
 		rf.mu.Lock()
 		rf.lastHeartTime = time.Now()
+		if args.Term > rf.currentTerm {
+			rf.role = Follower
+			rf.currentTerm = args.Term
+		} else if args.Term < rf.currentTerm {
+			reply.Term = rf.currentTerm
+		}
+
 		rf.mu.Unlock()
 	}
 }
