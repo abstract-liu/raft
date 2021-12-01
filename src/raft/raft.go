@@ -328,6 +328,7 @@ func (rf *Raft) startVote(){
 			} else {
 				if reply.Term > rf.currentTerm {
 					rf.currentTerm = reply.Term
+					rf.role = Follower
 				}
 			}
 		}(peer)
@@ -371,6 +372,7 @@ func (rf *Raft) sendHeart(server int){
 		if ok {
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
+				rf.role = Follower
 			}
 		}
 		time.Sleep(time.Duration(200) * time.Millisecond)
@@ -403,13 +405,12 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 		log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
 		rf.mu.Lock()
 		rf.lastHeartTime = time.Now()
-		if args.Term > rf.currentTerm {
+		if args.Term >= rf.currentTerm && args.LeaderId != rf.me{
 			rf.role = Follower
 			rf.currentTerm = args.Term
-		} else if args.Term < rf.currentTerm {
-			reply.Term = rf.currentTerm
 		}
 
+		reply.Term = rf.currentTerm
 		rf.mu.Unlock()
 	}
 }
