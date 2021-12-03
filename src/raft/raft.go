@@ -1,4 +1,8 @@
 package raft
+// todo: modify election request add term, applyLog logistics
+// todo: add appendEntries rpc
+// todo: add mutex
+
 
 //
 // this is an outline of the API that raft must expose to
@@ -180,9 +184,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = rf.currentTerm
 		return
 	} else if args.Term > rf.currentTerm {
-		rf.role = Follower
-		rf.currentTerm = args.Term
-		rf.votedFor = -1
+		rf.transfer2Follower(args.Term)
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
@@ -327,8 +329,7 @@ func (rf *Raft) startVote(){
 				}
 			} else {
 				if reply.Term > rf.currentTerm {
-					rf.currentTerm = reply.Term
-					rf.role = Follower
+					rf.transfer2Follower(reply.Term)
 				}
 			}
 		}(peer)
@@ -337,6 +338,14 @@ func (rf *Raft) startVote(){
 
 func (rf *Raft) startLeaderControl(){
 	//log.Printf("server %d start sending heartbeat package", rf.me)
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
+
+	for i := range rf.peers {
+		rf.nextIndex[i] = len(rf.log)
+		rf.matchIndex[i] = -1
+	}
+
 	for peer := range rf.peers {
 		go rf.sendHeart(peer)
 	}
@@ -371,8 +380,7 @@ func (rf *Raft) sendHeart(server int){
 		ok := rf.sendRequestEntity(server, &args, &reply)
 		if ok {
 			if reply.Term > rf.currentTerm {
-				rf.currentTerm = reply.Term
-				rf.role = Follower
+				rf.transfer2Follower(reply.Term)
 			}
 		}
 		time.Sleep(time.Duration(200) * time.Millisecond)
@@ -392,30 +400,112 @@ type EntityArgs struct {
 	LeaderId int
 	PrevLogIndex int
 	PrevLogTerm int
-	Entities []Entity
+	Entities []Log
 	LeaderCommit int
 }
 
-type Entity struct {
-
-}
 
 func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.lastHeartTime = time.Now()
+
+	if args.Term < rf.currentTerm {
+		reply.Success = false
+		return
+	}else if args.Term > rf.currentTerm {
+		rf.transfer2Follower(args.Term)
+	}
+
+	//heartbeat package
 	if args.Entities == nil {
 		//log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
-		rf.mu.Lock()
-		rf.lastHeartTime = time.Now()
-		if args.Term > rf.currentTerm {
-			rf.role = Follower
-			rf.currentTerm = args.Term
-		}
-
-		reply.Term = rf.currentTerm
-		rf.mu.Unlock()
+		return
 	}
+
+	if rf.log[args.PrevLogIndex].term != args.PrevLogTerm {
+		reply.Success = false
+	}
+	if args.LeaderCommit > rf.commitIndex {
+	}
+
+	reply.Term = rf.currentTerm
 }
 
 func (rf *Raft) sendRequestEntity(server int, args *EntityArgs, reply *EntityReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestEntity", args, reply)
 	return ok
+}
+
+func (rf *Raft) syncInconsistentLogs(server int){
+	//detect phase
+	for {
+		if rf.role != Leader {
+			return
+		}
+
+		prevLogTerm := -1
+		prevLogIndex := -1
+		if len(rf.log) > 0 {
+			prevLogIndex = rf.nextIndex[server] - 1
+			prevLogTerm = rf.log[prevLogIndex].term
+		}
+		args := EntityArgs{
+			Term: rf.currentTerm, LeaderId: rf.me, LeaderCommit: rf.commitIndex,
+			PrevLogTerm: prevLogTerm,
+			PrevLogIndex: prevLogIndex,
+		}
+
+		reply :=  EntityReply{}
+		rf.sendRequestEntity(server, &args, &reply)
+		if reply.Success {
+			break
+		} else {
+			if reply.Term > rf.currentTerm {
+				rf.transfer2Follower(reply.Term)
+			}
+
+			if rf.role == Leader {
+				rf.nextIndex[server] -= 1
+			}
+		}
+	}
+
+
+	//sync phase
+	//we suppose send all missing data at once now for simplicity, fault is that in-flight data will be huge
+	for rf.nextIndex[server] != len(rf.log) || rf.matchIndex[server] != len(rf.log)-1{
+		if rf.role != Leader {
+			return
+		}
+
+		prevLogIndex := rf.nextIndex[server] - 1
+		prevLogTerm := rf.log[prevLogIndex].term
+		entities := rf.log[prevLogIndex+1:]
+		args := EntityArgs{
+			Term: rf.currentTerm, LeaderId: rf.me, LeaderCommit: rf.commitIndex,
+			PrevLogTerm: prevLogTerm,
+			PrevLogIndex: prevLogIndex,
+			Entities: entities,
+		}
+		reply := EntityReply{}
+		rf.sendRequestEntity(server, &args, &reply)
+
+		if reply.Success {
+			rf.nextIndex[server] = len(rf.log)
+			rf.matchIndex[server] = len(rf.log) - 1
+		} else {
+			if reply.Term > rf.currentTerm {
+				rf.transfer2Follower(reply.Term)
+			}
+		}
+	}
+
+
+}
+
+func (rf *Raft) transfer2Follower(term int){
+	rf.role = Follower
+	rf.currentTerm = term
+	rf.votedFor = -1
 }
