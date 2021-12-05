@@ -1,6 +1,6 @@
 package raft
-// todo: modify election request add term, applyLog logistics
-// todo: add appendEntries rpc
+// todo: add appendEntries rpc, to be specific, we need to add respond funciton
+// todo: modify election request, heartbeat package add term, applyLog logistics
 // todo: add mutex
 
 
@@ -52,7 +52,6 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
-type RaftRole int
 
 const(
 	Leader = iota
@@ -76,7 +75,7 @@ type Raft struct {
 
 	//election state
 	lastHeartTime time.Time
-	role          RaftRole
+	role int
 
 	//persistent state on all servers
 	currentTerm int
@@ -90,10 +89,13 @@ type Raft struct {
 	//volatile state on leaders
 	nextIndex []int
 	matchIndex []int
+
+	applyChan chan ApplyMsg
 }
 
 type Log struct {
-	term int
+	Term int
+	Command interface{}
 }
 
 // return currentTerm and whether this server
@@ -251,6 +253,27 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 	isLeader = rf.role == Leader
 	term = rf.currentTerm
+
+	if !isLeader {
+		return index, term, isLeader
+	}
+
+	newLog := Log{
+		Term: rf.currentTerm,
+		Command: command,
+	}
+	rf.log = append(rf.log, newLog)
+	index = len(rf.log)-1
+	for idx := range rf.peers {
+		rf.nextIndex[idx] = index + 1
+	}
+
+	for idx := range rf.peers {
+		log.Printf("test %d", rf.nextIndex[idx])
+	}
+
+	go rf.syncLogs()
+
 	return index, term, isLeader
 }
 
@@ -292,6 +315,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.applyChan = applyCh
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
@@ -410,6 +434,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	defer rf.mu.Unlock()
 	rf.lastHeartTime = time.Now()
 
+	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
 		reply.Success = false
 		return
@@ -423,13 +448,21 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 		return
 	}
 
-	if rf.log[args.PrevLogIndex].term != args.PrevLogTerm {
+	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
-	}
-	if args.LeaderCommit > rf.commitIndex {
+		return
+	} else {
+		reply.Success = true
+		if args.Entities != nil {
+			rf.log = append(rf.log, args.Entities...)
+		}
+		return
 	}
 
-	reply.Term = rf.currentTerm
+	if args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = MinInt(args.LeaderCommit, len(rf.log)-1)
+	}
+
 }
 
 func (rf *Raft) sendRequestEntity(server int, args *EntityArgs, reply *EntityReply) bool {
@@ -437,18 +470,21 @@ func (rf *Raft) sendRequestEntity(server int, args *EntityArgs, reply *EntityRep
 	return ok
 }
 
-func (rf *Raft) syncInconsistentLogs(server int){
-	//detect phase
-	for {
-		if rf.role != Leader {
-			return
-		}
+
+func (rf *Raft) syncLogs(){
+	for peer := range rf.peers {
+		go func(server int) {
+			//detect phase
+			for {
+				if rf.role != Leader {
+					return
+				}
 
 		prevLogTerm := -1
 		prevLogIndex := -1
 		if len(rf.log) > 0 {
 			prevLogIndex = rf.nextIndex[server] - 1
-			prevLogTerm = rf.log[prevLogIndex].term
+			prevLogTerm = rf.log[prevLogIndex].Term
 		}
 		args := EntityArgs{
 			Term: rf.currentTerm, LeaderId: rf.me, LeaderCommit: rf.commitIndex,
@@ -456,52 +492,51 @@ func (rf *Raft) syncInconsistentLogs(server int){
 			PrevLogIndex: prevLogIndex,
 		}
 
-		reply :=  EntityReply{}
-		rf.sendRequestEntity(server, &args, &reply)
-		if reply.Success {
-			break
-		} else {
-			if reply.Term > rf.currentTerm {
-				rf.transfer2Follower(reply.Term)
+				reply := EntityReply{}
+				rf.sendRequestEntity(server, &args, &reply)
+				if reply.Success {
+					break
+				} else {
+					if reply.Term > rf.currentTerm {
+						rf.transfer2Follower(reply.Term)
+					}
+
+					if rf.role == Leader {
+						rf.nextIndex[server] -= 1
+					}
+				}
 			}
 
-			if rf.role == Leader {
-				rf.nextIndex[server] -= 1
+			//sync phase
+			//we suppose send all missing data at once now for simplicity, fault is that in-flight data will be huge
+			for rf.nextIndex[server] != len(rf.log) || rf.matchIndex[server] != len(rf.log)-1 {
+				if rf.role != Leader {
+					return
+				}
+
+				prevLogIndex := rf.nextIndex[server] - 1
+				prevLogTerm := rf.log[prevLogIndex].Term
+				entities := rf.log[prevLogIndex+1:]
+				args := EntityArgs{
+					Term: rf.currentTerm, LeaderId: rf.me, LeaderCommit: rf.commitIndex,
+					PrevLogTerm:  prevLogTerm,
+					PrevLogIndex: prevLogIndex,
+					Entities:     entities,
+				}
+				reply := EntityReply{}
+				rf.sendRequestEntity(server, &args, &reply)
+
+				if reply.Success {
+					rf.nextIndex[server] = len(rf.log)
+					rf.matchIndex[server] = len(rf.log) - 1
+				} else {
+					if reply.Term > rf.currentTerm {
+						rf.transfer2Follower(reply.Term)
+					}
+				}
 			}
-		}
+		}(peer)
 	}
-
-
-	//sync phase
-	//we suppose send all missing data at once now for simplicity, fault is that in-flight data will be huge
-	for rf.nextIndex[server] != len(rf.log) || rf.matchIndex[server] != len(rf.log)-1{
-		if rf.role != Leader {
-			return
-		}
-
-		prevLogIndex := rf.nextIndex[server] - 1
-		prevLogTerm := rf.log[prevLogIndex].term
-		entities := rf.log[prevLogIndex+1:]
-		args := EntityArgs{
-			Term: rf.currentTerm, LeaderId: rf.me, LeaderCommit: rf.commitIndex,
-			PrevLogTerm: prevLogTerm,
-			PrevLogIndex: prevLogIndex,
-			Entities: entities,
-		}
-		reply := EntityReply{}
-		rf.sendRequestEntity(server, &args, &reply)
-
-		if reply.Success {
-			rf.nextIndex[server] = len(rf.log)
-			rf.matchIndex[server] = len(rf.log) - 1
-		} else {
-			if reply.Term > rf.currentTerm {
-				rf.transfer2Follower(reply.Term)
-			}
-		}
-	}
-
-
 }
 
 func (rf *Raft) transfer2Follower(term int){
