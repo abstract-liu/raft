@@ -95,13 +95,13 @@ type Raft struct {
 }
 
 type Log struct {
-	Term int
-	Command interface{}
-	Index int
+	RaftLogTerm int
+	Command     interface{}
+	Index       int
 }
 
 func (log *Log) String() string {
-	return "Term:" + strconv.Itoa(log.Term)
+	return "RaftLogTerm:" + strconv.Itoa(log.RaftLogTerm)
 }
 
 // return currentTerm and whether this server
@@ -186,7 +186,7 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	//log.Printf("server %d receive vote request from %+v, and server term %d voteFor %d", rf.me, args, rf.currentTerm, rf.votedFor)
+	log.Printf("server %d receive vote request from %+v, and server term %d voteFor %d", rf.me, args, rf.currentTerm, rf.votedFor)
 	reply.VoteGranted = false
 	reply.Term = rf.currentTerm
 
@@ -209,7 +209,7 @@ func (rf *Raft) isYoungerThanCandidate(args *RequestVoteArgs) bool {
 	if args.LastLogIndex < len(rf.log)-1 {
 		return false
 	} else if args.LastLogIndex == len(rf.log)-1 {
-		if args.LastLogTerm < rf.log[len(rf.log)-1].Term {
+		if args.LastLogTerm < rf.log[len(rf.log)-1].RaftLogTerm {
 			return false
 		}
 	}
@@ -277,9 +277,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	newLog := Log{
-		Term: rf.currentTerm,
-		Command: command,
-		Index: len(rf.log),
+		RaftLogTerm: rf.currentTerm,
+		Command:     command,
+		Index:       len(rf.log),
 	}
 	rf.log = append(rf.log, newLog)
 	index = len(rf.log)-1
@@ -338,7 +338,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitIndex = 0
 
 	rf.log = make([]Log, 1)
-	rf.log[0] = Log{ Term: 0}
+	rf.log[0] = Log{ RaftLogTerm: 0}
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
@@ -351,11 +351,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) startVote(){
 	voteNum := 0
-	//log.Printf("server %d pass election time, and start voting now", rf.me)
+	log.Printf("server %d pass election time, and start voting now", rf.me)
 	for peer := range rf.peers{
 		go func(server int){
 			lastLogIndex := len(rf.log) - 1
-			lastLogTerm := rf.log[lastLogIndex].Term
+			lastLogTerm := rf.log[lastLogIndex].RaftLogTerm
 			args := RequestVoteArgs{Term: rf.currentTerm, CandidateId: rf.me, LastLogTerm: lastLogTerm, LastLogIndex: lastLogIndex}
 			reply := RequestVoteReply{}
 			resp := rf.sendRequestVote(server, &args, &reply)
@@ -365,7 +365,7 @@ func (rf *Raft) startVote(){
 			}
 
 			if reply.VoteGranted {
-				//log.Printf("server %d receive a vote from server %d", rf.me, server)
+				log.Printf("server %d receive a vote from server %d", rf.me, server)
 				voteNum += 1
 				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
 					rf.role = Leader
@@ -422,8 +422,8 @@ func (rf *Raft) sendHeart(server int){
 		reply := EntityReply{}
 		ok := rf.sendRequestEntity(server, &args, &reply)
 		if ok {
-			if reply.Term > rf.currentTerm {
-				rf.transfer2Follower(reply.Term)
+			if reply.ReplyTerm > rf.currentTerm {
+				rf.transfer2Follower(reply.ReplyTerm)
 			}
 		}
 		time.Sleep(time.Duration(200) * time.Millisecond)
@@ -434,8 +434,8 @@ func (rf *Raft) sendHeart(server int){
 
 
 type EntityReply struct {
-	Term int
-	Success bool
+	ReplyTerm int
+	Success   bool
 }
 
 type EntityArgs struct {
@@ -467,7 +467,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	defer rf.mu.Unlock()
 	rf.lastHeartTime = time.Now()
 	reply.Success = false
-	reply.Term = rf.currentTerm
+	reply.ReplyTerm = rf.currentTerm
 
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = MinInt(args.LeaderCommit, len(rf.log)-1)
@@ -486,7 +486,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 		return
 	}
 
-	if args.PrevLogIndex >= len(rf.log) && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if args.PrevLogIndex >= len(rf.log) && rf.log[args.PrevLogIndex].RaftLogTerm != args.PrevLogTerm {
 		reply.Success = false
 		return
 	} else {
@@ -516,7 +516,7 @@ func (rf *Raft) syncLogs(){
 				}
 
 				prevLogIndex := rf.nextIndex[server] - 1
-				prevLogTerm := rf.log[prevLogIndex].Term
+				prevLogTerm := rf.log[prevLogIndex].RaftLogTerm
 				referSlice := rf.log[prevLogIndex+1:]
 				entities := make([]Log, len(referSlice))
 				copy(entities, referSlice)
@@ -527,7 +527,7 @@ func (rf *Raft) syncLogs(){
 					PrevLogIndex: prevLogIndex,
 					Entities:     entities,
 				}
-				reply := EntityReply{Term: -1}
+				reply := EntityReply{}
 				rf.sendRequestEntity(server, &args, &reply)
 				//log.Printf("%+v %+v, from server %d", args, reply, server)
 
@@ -536,16 +536,16 @@ func (rf *Raft) syncLogs(){
 					rf.matchIndex[server] = rf.nextIndex[server] - 1
 
 					majorityIndex := rf.getMajorityIndex()
-					if majorityIndex > rf.commitIndex && rf.log[majorityIndex].Term == rf.currentTerm {
+					if majorityIndex > rf.commitIndex && rf.log[majorityIndex].RaftLogTerm == rf.currentTerm {
 						rf.commitIndex = majorityIndex
 					}
 
 				} else {
-					if reply.Term == -1 {
+					if reply.ReplyTerm == 0 {
 						continue
 					}
-					if reply.Term > rf.currentTerm {
-						rf.transfer2Follower(reply.Term)
+					if reply.ReplyTerm > rf.currentTerm {
+						rf.transfer2Follower(reply.ReplyTerm)
 					}
 					//decre nextIndex here
 					rf.nextIndex[server] -= 1
