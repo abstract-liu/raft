@@ -91,12 +91,13 @@ type Raft struct {
 	nextIndex []int
 	matchIndex []int
 
-	applyChan chan ApplyMsg
+	applyCh chan ApplyMsg
 }
 
 type Log struct {
 	Term int
 	Command interface{}
+	Index int
 }
 
 func (log *Log) String() string {
@@ -266,12 +267,10 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
-	term := -1
-	isLeader := true
+	term := rf.currentTerm
+	isLeader := rf.role == Leader
 
 	// Your code here (2B).
-	isLeader = rf.role == Leader
-	term = rf.currentTerm
 
 	if !isLeader {
 		return index, term, isLeader
@@ -280,11 +279,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	newLog := Log{
 		Term: rf.currentTerm,
 		Command: command,
+		Index: len(rf.log),
 	}
 	rf.log = append(rf.log, newLog)
 	index = len(rf.log)-1
 
-	log.Printf("start functionnnnnnnnnnnnn server %d %+v", rf.me, rf.log)
+	//log.Printf("start functionnnnnnnnnnnnn server %d %d %d", rf.me, index, term)
 
 	return index, term, isLeader
 }
@@ -327,12 +327,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	rf.applyChan = applyCh
+	rf.applyCh = applyCh
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.role = Follower
+
+	rf.lastApplied = 0
+	rf.commitIndex = 0
 
 	rf.log = make([]Log, 1)
 	rf.log[0] = Log{ Term: 0}
@@ -341,6 +344,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 
 	go rf.feelHeart()
+	go rf.applyCommit()
 
 	return rf
 }
@@ -448,7 +452,11 @@ func (entityArgs *EntityArgs) String() string {
 	for idx := range entityArgs.Entities{
 		log += entityArgs.Entities[idx].String() + ", "
 	}
-	return "term:" + strconv.Itoa(entityArgs.Term) + ", prevLogIndex:" + strconv.Itoa(entityArgs.PrevLogIndex) + ", prevLogTerm:" + strconv.Itoa(entityArgs.PrevLogTerm) + ", logEntities: " + log
+	return "LeaderCommit:" + strconv.Itoa(entityArgs.LeaderCommit) +
+		" term:" + strconv.Itoa(entityArgs.Term) +
+		", prevLogIndex:" + strconv.Itoa(entityArgs.PrevLogIndex) +
+		", prevLogTerm:" + strconv.Itoa(entityArgs.PrevLogTerm) +
+		", logEntities: " + log
 }
 
 
@@ -460,6 +468,10 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	rf.lastHeartTime = time.Now()
 	reply.Success = false
 	reply.Term = rf.currentTerm
+
+	if args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = MinInt(args.LeaderCommit, len(rf.log)-1)
+	}
 
 	if args.Term < rf.currentTerm {
 		return
@@ -482,12 +494,9 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 		if args.Entities != nil {
 			rf.log = append(rf.log, args.Entities...)
 		}
-		return
 	}
 
-	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = MinInt(args.LeaderCommit, len(rf.log)-1)
-	}
+
 
 }
 
@@ -520,7 +529,7 @@ func (rf *Raft) syncLogs(){
 				}
 				reply := EntityReply{Term: -1}
 				rf.sendRequestEntity(server, &args, &reply)
-				//log.Printf("%+v %+v", args, reply)
+				//log.Printf("%+v %+v, from server %d", args, reply, server)
 
 				if reply.Success {
 					rf.nextIndex[server] += len(entities)
@@ -560,4 +569,24 @@ func (rf *Raft) transfer2Follower(term int){
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.lastHeartTime = time.Now()
+}
+
+func (rf *Raft) applyCommit(){
+	for {
+		for rf.lastApplied < rf.commitIndex {
+			rf.lastApplied += 1
+			rf.apply(rf.log[rf.lastApplied])
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func (rf *Raft) apply(raftLog Log){
+	applyMsg := ApplyMsg{
+		CommandValid: true,
+		Command: raftLog.Command,
+		CommandIndex: raftLog.Index,
+	}
+	//log.Printf("server %d apply %+v", rf.me, applyMsg)
+	rf.applyCh <- applyMsg
 }
