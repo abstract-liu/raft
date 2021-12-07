@@ -23,6 +23,7 @@ package raft
 import (
 	"log"
 	"math/rand"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -396,7 +397,7 @@ func (rf *Raft) feelHeart() {
 		time.Sleep(time.Duration(electionTime) * time.Millisecond)
 
 		rf.mu.Lock()
-		if rf.role != Leader && rf.lastHeartTime.Before(nowTime) {
+		if  rf.lastHeartTime.Before(nowTime) {
 			rf.role = Candidate
 			rf.currentTerm += 1
 			rf.votedFor = rf.me
@@ -452,14 +453,15 @@ func (entityArgs *EntityArgs) String() string {
 
 
 func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
-	//log.Printf("server %d receive %s", rf.me, args.String())
+	//log.Printf("server %d receive %+v %d", rf.me, args, rf.currentTerm)
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.lastHeartTime = time.Now()
-
+	reply.Success = false
 	reply.Term = rf.currentTerm
+
 	if args.Term < rf.currentTerm {
-		reply.Success = false
 		return
 	}else if args.Term > rf.currentTerm {
 		rf.transfer2Follower(args.Term)
@@ -468,10 +470,11 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	//heartbeat package
 	if args.Entities == nil {
 		//log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
+		reply.Success = true
 		return
 	}
 
-	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if args.PrevLogIndex >= len(rf.log) && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
 		return
 	} else {
@@ -515,22 +518,41 @@ func (rf *Raft) syncLogs(){
 					PrevLogIndex: prevLogIndex,
 					Entities:     entities,
 				}
-				reply := EntityReply{}
+				reply := EntityReply{Term: -1}
 				rf.sendRequestEntity(server, &args, &reply)
-				//log.Printf("%+v", reply)
+				//log.Printf("%+v %+v", args, reply)
 
 				if reply.Success {
 					rf.nextIndex[server] += len(entities)
 					rf.matchIndex[server] = rf.nextIndex[server] - 1
+
+					majorityIndex := rf.getMajorityIndex()
+					if majorityIndex > rf.commitIndex && rf.log[majorityIndex].Term == rf.currentTerm {
+						rf.commitIndex = majorityIndex
+					}
+
 				} else {
+					if reply.Term == -1 {
+						continue
+					}
 					if reply.Term > rf.currentTerm {
 						rf.transfer2Follower(reply.Term)
 					}
+					//decre nextIndex here
+					rf.nextIndex[server] -= 1
 				}
+				rf.lastHeartTime = time.Now()
 				time.Sleep(100 * time.Millisecond)
 			}
 		}(peer)
 	}
+}
+
+func (rf *Raft) getMajorityIndex() int {
+	sortSlice := make([]int, len(rf.peers))
+	copy(sortSlice, rf.matchIndex)
+	sort.Ints(sortSlice)
+	return sortSlice[len(rf.peers)/2]
 }
 
 func (rf *Raft) transfer2Follower(term int){
