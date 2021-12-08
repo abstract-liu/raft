@@ -471,7 +471,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	if args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
 		reply.Success = true
 		if args.Entities != nil {
-			rf.log = append(rf.log, args.Entities...)
+			rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entities...)
 		}
 	} else {
 		reply.Success = false
