@@ -463,10 +463,13 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	rf.lastHeartTime = time.Now()
 	reply.Success = false
 	reply.ReplyTerm = rf.currentTerm
-
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = MinInt(args.LeaderCommit, len(rf.log)-1)
+		lastNewIndex := len(rf.log) - 1
+		if rf.log[lastNewIndex].RaftLogTerm == args.Term {
+			rf.commitIndex = MinInt(args.LeaderCommit, lastNewIndex)
+		}
 	}
+
 
 	if args.Term < rf.currentTerm {
 		return
@@ -486,6 +489,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	if args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
 		reply.Success = true
 		if args.Entities != nil {
+			//log.Printf("server %d add log at %d ", rf.me, args.PrevLogIndex+1)
 			rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entities...)
 		}
 	} else {
@@ -585,6 +589,6 @@ func (rf *Raft) apply(raftLog Log){
 		Command: raftLog.Command,
 		CommandIndex: raftLog.Index,
 	}
-	//log.Printf("server %d apply %+v", rf.me, applyMsg)
+	log.Printf("server %d apply %+v", rf.me, applyMsg)
 	rf.applyCh <- applyMsg
 }
