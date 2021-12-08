@@ -192,7 +192,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term < rf.currentTerm {
 		return
 	} else if args.Term > rf.currentTerm {
-		rf.transfer2Follower(args.Term, "requestVOte")
+		rf.transfer2Follower(args.Term, "requestVote")
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
@@ -205,6 +205,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) isYoungerThanCandidate(args *RequestVoteArgs) bool {
+	rfLastLogTerm := rf.log[len(rf.log)-1].RaftLogTerm
+	if args.LastLogTerm < rfLastLogTerm{
+		return false
+	} else if args.LastLogTerm == rfLastLogTerm {
+		if args.LastLogIndex < len(rf.log)-1 {
+			return false
+		}
+	}
+	return true
+
+
+	/*
 	if args.LastLogIndex < len(rf.log)-1 {
 		return false
 	} else if args.LastLogIndex == len(rf.log)-1 {
@@ -213,6 +225,7 @@ func (rf *Raft) isYoungerThanCandidate(args *RequestVoteArgs) bool {
 		}
 	}
 	return true
+	 */
 }
 
 //
@@ -284,7 +297,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index = len(rf.log)-1
 	rf.matchIndex[rf.me] = index
 
-	log.Printf("start function server receive command %v", newLog)
+	//log.Printf("start function server receive command %v", newLog)
 
 	return index, term, isLeader
 }
@@ -462,11 +475,13 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	}
 
 	//heartbeat package
+	/*
 	if args.Entities == nil {
 		//log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
 		reply.Success = true
 		return
 	}
+	 */
 
 	if args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
 		reply.Success = true
@@ -570,6 +585,6 @@ func (rf *Raft) apply(raftLog Log){
 		Command: raftLog.Command,
 		CommandIndex: raftLog.Index,
 	}
-	log.Printf("server %d apply %+v", rf.me, applyMsg)
+	//log.Printf("server %d apply %+v", rf.me, applyMsg)
 	rf.applyCh <- applyMsg
 }
