@@ -1,5 +1,4 @@
 package raft
-// todo: modify election request, heartbeat package add term, applyLog logistics
 // todo: add mutex
 
 
@@ -186,14 +185,14 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	log.Printf("server %d receive vote request from %+v, and server term %d voteFor %d", rf.me, args, rf.currentTerm, rf.votedFor)
+	//log.Printf("server %d receive vote request from %+v, and server term %d voteFor %d", rf.me, args, rf.currentTerm, rf.votedFor)
 	reply.VoteGranted = false
 	reply.Term = rf.currentTerm
 
 	if args.Term < rf.currentTerm {
 		return
 	} else if args.Term > rf.currentTerm {
-		rf.transfer2Follower(args.Term)
+		rf.transfer2Follower(args.Term, "requestVOte")
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
@@ -283,8 +282,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	rf.log = append(rf.log, newLog)
 	index = len(rf.log)-1
+	rf.matchIndex[rf.me] = index
 
-	//log.Printf("start functionnnnnnnnnnnnn server %d %d %d", rf.me, index, term)
+	log.Printf("start function server receive command %v", newLog)
 
 	return index, term, isLeader
 }
@@ -351,7 +351,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) startVote(){
 	voteNum := 0
-	log.Printf("server %d pass election time, and start voting now", rf.me)
+	//log.Printf("server %d pass election time, and start voting now", rf.me)
 	for peer := range rf.peers{
 		go func(server int){
 			lastLogIndex := len(rf.log) - 1
@@ -365,7 +365,7 @@ func (rf *Raft) startVote(){
 			}
 
 			if reply.VoteGranted {
-				log.Printf("server %d receive a vote from server %d", rf.me, server)
+				//log.Printf("server %d receive a vote from server %d", rf.me, server)
 				voteNum += 1
 				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
 					rf.role = Leader
@@ -374,7 +374,7 @@ func (rf *Raft) startVote(){
 				}
 			} else {
 				if reply.Term > rf.currentTerm {
-					rf.transfer2Follower(reply.Term)
+					rf.transfer2Follower(reply.Term, "vote reply")
 				}
 			}
 		}(peer)
@@ -412,24 +412,6 @@ func (rf *Raft) feelHeart() {
 		rf.mu.Unlock()
 	}
 }
-
-func (rf *Raft) sendHeart(server int){
-	for {
-		if rf.role != Leader {
-			return
-		}
-		args := EntityArgs{Term: rf.currentTerm, LeaderId: rf.me, Entities: nil}
-		reply := EntityReply{}
-		ok := rf.sendRequestEntity(server, &args, &reply)
-		if ok {
-			if reply.ReplyTerm > rf.currentTerm {
-				rf.transfer2Follower(reply.ReplyTerm)
-			}
-		}
-		time.Sleep(time.Duration(200) * time.Millisecond)
-	}
-}
-
 
 
 
@@ -476,7 +458,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	if args.Term < rf.currentTerm {
 		return
 	}else if args.Term > rf.currentTerm {
-		rf.transfer2Follower(args.Term)
+		rf.transfer2Follower(args.Term, "requestEntity")
 	}
 
 	//heartbeat package
@@ -486,17 +468,14 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 		return
 	}
 
-	if args.PrevLogIndex >= len(rf.log) && rf.log[args.PrevLogIndex].RaftLogTerm != args.PrevLogTerm {
-		reply.Success = false
-		return
-	} else {
+	if args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
 		reply.Success = true
 		if args.Entities != nil {
 			rf.log = append(rf.log, args.Entities...)
 		}
+	} else {
+		reply.Success = false
 	}
-
-
 
 }
 
@@ -536,8 +515,10 @@ func (rf *Raft) syncLogs(){
 					rf.matchIndex[server] = rf.nextIndex[server] - 1
 
 					majorityIndex := rf.getMajorityIndex()
+					//log.Printf("majority %d", majorityIndex)
 					if majorityIndex > rf.commitIndex && rf.log[majorityIndex].RaftLogTerm == rf.currentTerm {
 						rf.commitIndex = majorityIndex
+						//log.Printf("commitIndex %d", rf.commitIndex)
 					}
 
 				} else {
@@ -545,7 +526,7 @@ func (rf *Raft) syncLogs(){
 						continue
 					}
 					if reply.ReplyTerm > rf.currentTerm {
-						rf.transfer2Follower(reply.ReplyTerm)
+						rf.transfer2Follower(reply.ReplyTerm, "syncLog response")
 					}
 					//decre nextIndex here
 					rf.nextIndex[server] -= 1
@@ -561,10 +542,12 @@ func (rf *Raft) getMajorityIndex() int {
 	sortSlice := make([]int, len(rf.peers))
 	copy(sortSlice, rf.matchIndex)
 	sort.Ints(sortSlice)
+	//log.Printf("%v", sortSlice)
 	return sortSlice[len(rf.peers)/2]
 }
 
-func (rf *Raft) transfer2Follower(term int){
+func (rf *Raft) transfer2Follower(term int, process string ){
+	//log.Printf("server %d find its prevTerm %d smaller than respTerm %d durring %s, change to follwer", rf.me, rf.currentTerm, term, process)
 	rf.role = Follower
 	rf.currentTerm = term
 	rf.votedFor = -1
@@ -587,6 +570,6 @@ func (rf *Raft) apply(raftLog Log){
 		Command: raftLog.Command,
 		CommandIndex: raftLog.Index,
 	}
-	//log.Printf("server %d apply %+v", rf.me, applyMsg)
+	log.Printf("server %d apply %+v", rf.me, applyMsg)
 	rf.applyCh <- applyMsg
 }
