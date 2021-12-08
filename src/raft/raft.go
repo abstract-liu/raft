@@ -206,6 +206,7 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	} else {
 		rf.raftLog = raftLog
+		log.Printf("server %d decoding raftlog %v", rf.me, rf.raftLog)
 	}
 
 }
@@ -650,6 +651,6 @@ func (rf *Raft) apply(raftLog Log){
 		Command: raftLog.Command,
 		CommandIndex: raftLog.Index,
 	}
-	//raftLog.Printf("server %d apply %+v", rf.me, applyMsg)
+	log.Printf("server %d apply %+v", rf.me, applyMsg)
 	rf.applyCh <- applyMsg
 }
