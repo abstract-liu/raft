@@ -589,6 +589,6 @@ func (rf *Raft) apply(raftLog Log){
 		Command: raftLog.Command,
 		CommandIndex: raftLog.Index,
 	}
-	log.Printf("server %d apply %+v", rf.me, applyMsg)
+	//log.Printf("server %d apply %+v", rf.me, applyMsg)
 	rf.applyCh <- applyMsg
 }
