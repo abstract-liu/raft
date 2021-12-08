@@ -20,6 +20,8 @@ package raft
 //
 
 import (
+	"../labgob"
+	"bytes"
 	"log"
 	"math/rand"
 	"sort"
@@ -130,6 +132,28 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	err := e.Encode(rf.currentTerm)
+	if err != nil {
+		log.Printf("serialize currentTerm failed!")
+		return
+	}
+
+	err = e.Encode(rf.votedFor)
+	if err != nil {
+		log.Printf("serialize votedFor failed!")
+		return
+	}
+
+	err = e.Encode(rf.log)
+	if err != nil {
+		log.Printf("serialize log failed!")
+		return
+	}
+
+	rf.persister.SaveRaftState(w.Bytes())
 }
 
 
@@ -217,15 +241,15 @@ func (rf *Raft) isYoungerThanCandidate(args *RequestVoteArgs) bool {
 
 
 	/*
-	if args.LastLogIndex < len(rf.log)-1 {
-		return false
-	} else if args.LastLogIndex == len(rf.log)-1 {
-		if args.LastLogTerm < rf.log[len(rf.log)-1].RaftLogTerm {
+		if args.LastLogIndex < len(rf.log)-1 {
 			return false
+		} else if args.LastLogIndex == len(rf.log)-1 {
+			if args.LastLogTerm < rf.log[len(rf.log)-1].RaftLogTerm {
+				return false
+			}
 		}
-	}
-	return true
-	 */
+		return true
+	*/
 }
 
 //
@@ -479,12 +503,12 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 
 	//heartbeat package
 	/*
-	if args.Entities == nil {
-		//log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
-		reply.Success = true
-		return
-	}
-	 */
+		if args.Entities == nil {
+			//log.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
+			reply.Success = true
+			return
+		}
+	*/
 
 	if args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
 		reply.Success = true
