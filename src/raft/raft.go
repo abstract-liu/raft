@@ -524,9 +524,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	reply.ReplyTerm = rf.currentTerm
 	if args.LeaderCommit > rf.commitIndex {
 		lastNewIndex := len(rf.raftLog) - 1
-		if rf.raftLog[lastNewIndex].RaftLogTerm == args.Term {
-			rf.commitIndex = MinInt(args.LeaderCommit, lastNewIndex)
-		}
+		rf.commitIndex = MinInt(args.LeaderCommit, lastNewIndex)
 	}
 
 
@@ -548,7 +546,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	if args.PrevLogIndex < len(rf.raftLog) && rf.raftLog[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
 		reply.Success = true
 		if args.Entities != nil {
-			//raftLog.Printf("server %d add raftLog at %d ", rf.me, args.PrevLogIndex+1)
+			//log.Printf("server %d add raftLog at %d ", rf.me, args.PrevLogIndex+1)
 			rf.raftLog = append(rf.raftLog[:args.PrevLogIndex+1], args.Entities...)
 			rf.persist()
 		}
