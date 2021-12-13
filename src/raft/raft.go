@@ -207,7 +207,7 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	} else {
 		rf.raftLog = raftLog
-		log.Printf("server %d decoding raftlog %v", rf.me, rf.raftLog)
+		//log.Printf("server %d decoding raftlog %v", rf.me, rf.raftLog)
 	}
 
 }
@@ -255,7 +255,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		if rf.isYoungerThanCandidate(args) {
 			rf.votedFor = args.CandidateId
-			rf.persist()
+			go rf.persist()
 			reply.VoteGranted = true
 			//raftLog.Printf("server %d grant vote to %d", rf.me, rf.votedFor)
 		}
@@ -531,7 +531,7 @@ func (rf *Raft) feelHeart() {
 			rf.role = Candidate
 			rf.currentTerm += 1
 			rf.votedFor = rf.me
-			rf.persist()
+			go rf.persist()
 			rf.lastHeartTime = time.Now()
 
 			go rf.startVote()
@@ -578,10 +578,7 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	rf.lastHeartTime = time.Now()
 	reply.Success = false
 	reply.ReplyTerm = rf.currentTerm
-	if args.LeaderCommit > rf.commitIndex {
-		lastNewIndex := len(rf.raftLog) - 1
-		rf.commitIndex = MinInt(args.LeaderCommit, lastNewIndex)
-	}
+
 
 
 	if args.Term < rf.currentTerm {
@@ -604,8 +601,13 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 		if args.Entities != nil {
 			//log.Printf("server %d add raftLog at %d ", rf.me, args.PrevLogIndex+1)
 			rf.raftLog = append(rf.raftLog[:args.PrevLogIndex+1], args.Entities...)
-			rf.persist()
+			go rf.persist()
 		}
+		if args.LeaderCommit > rf.commitIndex {
+			lastNewIndex := len(rf.raftLog) - 1
+			rf.commitIndex = MinInt(args.LeaderCommit, lastNewIndex)
+		}
+
 	} else {
 		reply.Success = false
 	}
@@ -631,7 +633,7 @@ func (rf *Raft) transfer2Follower(term int, process string ){
 	rf.role = Follower
 	rf.currentTerm = term
 	rf.votedFor = -1
-	rf.persist()
+	go rf.persist()
 
 	rf.lastHeartTime = time.Now()
 }
