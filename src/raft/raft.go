@@ -450,7 +450,7 @@ func (rf *Raft) startVote(){
 				voteNum += 1
 				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
 					rf.role = Leader
-					log.Printf("server %d successive become a leader", rf.me)
+					//log.Printf("server %d successive become a leader", rf.me)
 					go rf.startLeaderControl()
 				}
 			} else {
@@ -520,19 +520,29 @@ func (rf *Raft) startLeaderControl(){
 	rf.matchIndex = make([]int, len(rf.peers))
 
 	rf.mu.Lock()
+	logLength := len(rf.raftLog)
 	for i := range rf.peers {
-		rf.nextIndex[i] = len(rf.raftLog)
+		rf.nextIndex[i] = logLength
 		rf.matchIndex[i] = -1
 	}
+	//log.Printf("log length:%d", logLength)
 	rf.mu.Unlock()
 
 	for peer := range rf.peers {
 		go func(server int) {
+			rf.mu.Lock()
+			currentTerm := rf.currentTerm
+			rf.mu.Unlock()
 			for {
 				//we suppose send all missing data at once now for simplicity, fault is that in-flight data will be huge
-				if rf.role != Leader  || server == rf.me{
+				//this writing is ugly.... but i dont' know better way to write
+				rf.mu.Lock()
+				if rf.role != Leader  || server == rf.me || currentTerm != rf.currentTerm{
+					rf.mu.Unlock()
 					return
 				}
+				rf.mu.Unlock()
+
 				go rf.syncLogs(server)
 				time.Sleep(100 * time.Millisecond)
 			}
@@ -544,6 +554,7 @@ func (rf *Raft) startLeaderControl(){
 func (rf *Raft) syncLogs(server int) {
 	rf.mu.Lock()
 	prevLogIndex := rf.nextIndex[server] - 1
+	//log.Printf("send to server %d prevLogIndex: %d, len: %d, server: %d", server, prevLogIndex, len(rf.raftLog), rf.me)
 	prevLogTerm := rf.raftLog[prevLogIndex].RaftLogTerm
 	referSlice := rf.raftLog[prevLogIndex+1:]
 	entities := make([]Log, len(referSlice))
@@ -568,8 +579,10 @@ func (rf *Raft) syncLogs(server int) {
 	}
 
 	if reply.Success {
-		rf.nextIndex[server] += len(entities)
-		rf.matchIndex[server] = rf.nextIndex[server] - 1
+		if prevLogIndex == rf.nextIndex[server] - 1 {
+			rf.nextIndex[server] += len(entities)
+			rf.matchIndex[server] = rf.nextIndex[server] - 1
+		}
 
 		majorityIndex := rf.getMajorityIndex()
 		//raftLog.Printf("majority %d", majorityIndex)
@@ -642,7 +655,7 @@ func (rf *Raft) getMajorityIndex() int {
 }
 
 func (rf *Raft) transfer2Follower(term int, process string ){
-	//raftLog.Printf("server %d find its prevTerm %d smaller than respTerm %d durring %s, change to follwer", rf.me, rf.currentTerm, term, process)
+	//log.Printf("server %d find its prevTerm %d smaller than respTerm %d durring %s, change to follwer", rf.me, rf.currentTerm, term, process)
 	rf.role = Follower
 	rf.currentTerm = term
 	rf.votedFor = -1
