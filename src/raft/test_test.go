@@ -8,7 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	"log"
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -798,6 +801,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
+			log.Printf("disconnect server %d", leader)
 			cfg.disconnect(leader)
 			nup -= 1
 		}
@@ -805,6 +809,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		if nup < 3 {
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
+				log.Printf("connect server %d", s)
 				cfg.connect(s)
 				nup += 1
 			}
@@ -813,6 +818,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
+			log.Printf("connect server %d", i)
 			cfg.connect(i)
 		}
 	}

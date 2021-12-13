@@ -25,7 +25,6 @@ import (
 	"log"
 	"math/rand"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -101,9 +100,11 @@ type Log struct {
 	Index       int
 }
 
+/*
 func (log *Log) String() string {
 	return "RaftLogTerm:" + strconv.Itoa(log.RaftLogTerm)
 }
+ */
 
 // return currentTerm and whether this server
 // believes it is the leader.
@@ -466,107 +467,6 @@ func (rf *Raft) startLeaderControl(){
 		rf.matchIndex[i] = -1
 	}
 
-	go rf.syncLogs()
-}
-
-func (rf *Raft) feelHeart() {
-	for {
-		electionTime := rand.Intn(500) + 300
-		nowTime := time.Now()
-		time.Sleep(time.Duration(electionTime) * time.Millisecond)
-
-		rf.mu.Lock()
-		if  rf.lastHeartTime.Before(nowTime) {
-			rf.role = Candidate
-			rf.currentTerm += 1
-			rf.votedFor = rf.me
-			rf.persist()
-			rf.lastHeartTime = time.Now()
-
-			go rf.startVote()
-		}
-		rf.mu.Unlock()
-	}
-}
-
-
-
-type EntityReply struct {
-	ReplyTerm int
-	Success   bool
-}
-
-type EntityArgs struct {
-	Term int
-	LeaderId int
-	PrevLogIndex int
-	PrevLogTerm int
-	Entities []Log
-	LeaderCommit int
-}
-
-func (entityArgs *EntityArgs) String() string {
-	var log string
-	for idx := range entityArgs.Entities{
-		log += entityArgs.Entities[idx].String() + ", "
-	}
-	return "LeaderCommit:" + strconv.Itoa(entityArgs.LeaderCommit) +
-		" term:" + strconv.Itoa(entityArgs.Term) +
-		", prevLogIndex:" + strconv.Itoa(entityArgs.PrevLogIndex) +
-		", prevLogTerm:" + strconv.Itoa(entityArgs.PrevLogTerm) +
-		", logEntities: " + log
-}
-
-
-func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
-	//raftLog.Printf("server %d receive %+v %d", rf.me, args, rf.currentTerm)
-
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.lastHeartTime = time.Now()
-	reply.Success = false
-	reply.ReplyTerm = rf.currentTerm
-	if args.LeaderCommit > rf.commitIndex {
-		lastNewIndex := len(rf.raftLog) - 1
-		rf.commitIndex = MinInt(args.LeaderCommit, lastNewIndex)
-	}
-
-
-	if args.Term < rf.currentTerm {
-		return
-	}else if args.Term > rf.currentTerm {
-		rf.transfer2Follower(args.Term, "requestEntity")
-	}
-
-	//heartbeat package
-	/*
-		if args.Entities == nil {
-			//raftLog.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
-			reply.Success = true
-			return
-		}
-	*/
-
-	if args.PrevLogIndex < len(rf.raftLog) && rf.raftLog[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
-		reply.Success = true
-		if args.Entities != nil {
-			//log.Printf("server %d add raftLog at %d ", rf.me, args.PrevLogIndex+1)
-			rf.raftLog = append(rf.raftLog[:args.PrevLogIndex+1], args.Entities...)
-			rf.persist()
-		}
-	} else {
-		reply.Success = false
-	}
-
-}
-
-func (rf *Raft) sendRequestEntity(server int, args *EntityArgs, reply *EntityReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestEntity", args, reply)
-	return ok
-}
-
-
-func (rf *Raft) syncLogs(){
 	for peer := range rf.peers {
 		go func(server int) {
 			for {
@@ -617,7 +517,106 @@ func (rf *Raft) syncLogs(){
 			}
 		}(peer)
 	}
+
 }
+
+func (rf *Raft) feelHeart() {
+	for {
+		electionTime := rand.Intn(500) + 300
+		nowTime := time.Now()
+		time.Sleep(time.Duration(electionTime) * time.Millisecond)
+
+		rf.mu.Lock()
+		if  rf.lastHeartTime.Before(nowTime) {
+			rf.role = Candidate
+			rf.currentTerm += 1
+			rf.votedFor = rf.me
+			rf.persist()
+			rf.lastHeartTime = time.Now()
+
+			go rf.startVote()
+		}
+		rf.mu.Unlock()
+	}
+}
+
+
+
+type EntityReply struct {
+	ReplyTerm int
+	Success   bool
+}
+
+type EntityArgs struct {
+	Term int
+	LeaderId int
+	PrevLogIndex int
+	PrevLogTerm int
+	Entities []Log
+	LeaderCommit int
+}
+
+/*
+func (entityArgs *EntityArgs) String() string {
+	var log string
+	for idx := range entityArgs.Entities{
+		log += entityArgs.Entities[idx].String() + ", "
+	}
+	return "LeaderCommit:" + strconv.Itoa(entityArgs.LeaderCommit) +
+		" term:" + strconv.Itoa(entityArgs.Term) +
+		", prevLogIndex:" + strconv.Itoa(entityArgs.PrevLogIndex) +
+		", prevLogTerm:" + strconv.Itoa(entityArgs.PrevLogTerm) +
+		", logEntities: " + log
+}
+*/
+
+func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
+	//raftLog.Printf("server %d receive %+v %d", rf.me, args, rf.currentTerm)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.lastHeartTime = time.Now()
+	reply.Success = false
+	reply.ReplyTerm = rf.currentTerm
+	if args.LeaderCommit > rf.commitIndex {
+		lastNewIndex := len(rf.raftLog) - 1
+		rf.commitIndex = MinInt(args.LeaderCommit, lastNewIndex)
+	}
+
+
+	if args.Term < rf.currentTerm {
+		return
+	}else if args.Term > rf.currentTerm {
+		rf.transfer2Follower(args.Term, "requestEntity")
+	}
+
+	//heartbeat package
+	/*
+		if args.Entities == nil {
+			//raftLog.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
+			reply.Success = true
+			return
+		}
+	*/
+
+	if args.PrevLogIndex < len(rf.raftLog) && rf.raftLog[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
+		reply.Success = true
+		if args.Entities != nil {
+			//log.Printf("server %d add raftLog at %d ", rf.me, args.PrevLogIndex+1)
+			rf.raftLog = append(rf.raftLog[:args.PrevLogIndex+1], args.Entities...)
+			rf.persist()
+		}
+	} else {
+		reply.Success = false
+	}
+
+}
+
+func (rf *Raft) sendRequestEntity(server int, args *EntityArgs, reply *EntityReply) bool {
+	ok := rf.peers[server].Call("Raft.RequestEntity", args, reply)
+	return ok
+}
+
 
 func (rf *Raft) getMajorityIndex() int {
 	sortSlice := make([]int, len(rf.peers))
