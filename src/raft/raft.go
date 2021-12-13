@@ -1,5 +1,5 @@
 package raft
-// todo: add mutex
+// todo: add mutex to protect essential part
 
 
 //
@@ -336,12 +336,14 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
+	rf.mu.Lock()
 	term := rf.currentTerm
 	isLeader := rf.role == Leader
 
 	// Your code here (2B).
 
 	if !isLeader {
+		rf.mu.Unlock()
 		return index, term, isLeader
 	}
 
@@ -351,11 +353,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Index:       len(rf.raftLog),
 	}
 	rf.raftLog = append(rf.raftLog, newLog)
+	rf.mu.Unlock()
+
 	rf.persist()
+
+	rf.mu.Lock()
 	index = len(rf.raftLog)-1
 	rf.matchIndex[rf.me] = index
+	rf.mu.Unlock()
 
-	//raftLog.Printf("start function server receive command %v", newLog)
+	//log.Printf("start function server receive command %v, index is %d", newLog, index)
 
 	return index, term, isLeader
 }
@@ -575,8 +582,6 @@ func (rf *Raft) syncLogs(){
 				prevLogTerm := rf.raftLog[prevLogIndex].RaftLogTerm
 				referSlice := rf.raftLog[prevLogIndex+1:]
 				entities := make([]Log, len(referSlice))
-				copy(entities, referSlice)
-
 				args := EntityArgs{
 					Term: rf.currentTerm, LeaderId: rf.me, LeaderCommit: rf.commitIndex,
 					PrevLogTerm:  prevLogTerm,
@@ -584,6 +589,8 @@ func (rf *Raft) syncLogs(){
 					Entities:     entities,
 				}
 				reply := EntityReply{}
+				copy(entities, referSlice)
+
 				rf.sendRequestEntity(server, &args, &reply)
 				//raftLog.Printf("%+v %+v, from server %d", args, reply, server)
 
@@ -635,11 +642,13 @@ func (rf *Raft) transfer2Follower(term int, process string ){
 
 func (rf *Raft) applyCommit(){
 	for {
+		rf.mu.Lock()
 		for rf.lastApplied < rf.commitIndex {
 			rf.lastApplied += 1
 			rf.apply(rf.raftLog[rf.lastApplied])
 		}
-		time.Sleep(500 * time.Millisecond)
+		rf.mu.Unlock()
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -649,6 +658,6 @@ func (rf *Raft) apply(raftLog Log){
 		Command: raftLog.Command,
 		CommandIndex: raftLog.Index,
 	}
-	log.Printf("server %d apply %+v", rf.me, applyMsg)
+	//log.Printf("server %d apply %+v", rf.me, applyMsg)
 	rf.applyCh <- applyMsg
 }
