@@ -257,7 +257,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			rf.votedFor = args.CandidateId
 			go rf.persist()
 			reply.VoteGranted = true
-			//raftLog.Printf("server %d grant vote to %d", rf.me, rf.votedFor)
+			//log.Printf("server %d grant vote to %d, server term:%d, index:%d, follower term:%d, index:%d", rf.me, rf.votedFor, args.Term, args.LastLogIndex, rf.raftLog[len(rf.raftLog)-1].RaftLogTerm, rf.raftLog[len(rf.raftLog)-1].Index)
+
 		}
 	}
 }
@@ -426,10 +427,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 func (rf *Raft) startVote(){
-	voteNum := 0
+	voteNum := 1
 	//raftLog.Printf("server %d pass election time, and start voting now", rf.me)
 	for peer := range rf.peers{
 		go func(server int){
+			if server == rf.me {
+				return
+			}
+
 			lastLogIndex := len(rf.raftLog) - 1
 			lastLogTerm := rf.raftLog[lastLogIndex].RaftLogTerm
 			args := RequestVoteArgs{Term: rf.currentTerm, CandidateId: rf.me, LastLogTerm: lastLogTerm, LastLogIndex: lastLogIndex}
@@ -441,7 +446,7 @@ func (rf *Raft) startVote(){
 			}
 
 			if reply.VoteGranted {
-				//raftLog.Printf("server %d receive a vote from server %d", rf.me, server)
+				//log.Printf("server %d receive a vote from server %d, currentTerm: %d", rf.me, server, rf.currentTerm)
 				voteNum += 1
 				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
 					rf.role = Leader
@@ -451,6 +456,7 @@ func (rf *Raft) startVote(){
 			} else {
 				if reply.Term > rf.currentTerm {
 					rf.transfer2Follower(reply.Term, "vote reply")
+					return
 				}
 			}
 		}(peer)
@@ -464,7 +470,7 @@ func (rf *Raft) feelHeart() {
 		time.Sleep(time.Duration(electionTime) * time.Millisecond)
 
 		rf.mu.Lock()
-		if  rf.lastHeartTime.Before(nowTime) {
+		if  rf.lastHeartTime.Before(nowTime) && rf.role != Leader{
 			rf.role = Candidate
 			rf.currentTerm += 1
 			rf.votedFor = rf.me
@@ -513,10 +519,12 @@ func (rf *Raft) startLeaderControl(){
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 
+	rf.mu.Lock()
 	for i := range rf.peers {
 		rf.nextIndex[i] = len(rf.raftLog)
 		rf.matchIndex[i] = -1
 	}
+	rf.mu.Unlock()
 
 	for peer := range rf.peers {
 		go func(server int) {
@@ -525,45 +533,7 @@ func (rf *Raft) startLeaderControl(){
 				if rf.role != Leader  || server == rf.me{
 					return
 				}
-
-				prevLogIndex := rf.nextIndex[server] - 1
-				prevLogTerm := rf.raftLog[prevLogIndex].RaftLogTerm
-				referSlice := rf.raftLog[prevLogIndex+1:]
-				entities := make([]Log, len(referSlice))
-				args := EntityArgs{
-					Term: rf.currentTerm, LeaderId: rf.me, LeaderCommit: rf.commitIndex,
-					PrevLogTerm:  prevLogTerm,
-					PrevLogIndex: prevLogIndex,
-					Entities:     entities,
-				}
-				reply := EntityReply{}
-				copy(entities, referSlice)
-
-				rf.sendRequestEntity(server, &args, &reply)
-				//raftLog.Printf("%+v %+v, from server %d", args, reply, server)
-
-				if reply.Success {
-					rf.nextIndex[server] += len(entities)
-					rf.matchIndex[server] = rf.nextIndex[server] - 1
-
-					majorityIndex := rf.getMajorityIndex()
-					//raftLog.Printf("majority %d", majorityIndex)
-					if majorityIndex > rf.commitIndex && rf.raftLog[majorityIndex].RaftLogTerm == rf.currentTerm {
-						rf.commitIndex = majorityIndex
-						//raftLog.Printf("commitIndex %d", rf.commitIndex)
-					}
-
-				} else {
-					if reply.ReplyTerm == 0 {
-						continue
-					}
-					if reply.ReplyTerm > rf.currentTerm {
-						rf.transfer2Follower(reply.ReplyTerm, "syncLog response")
-					}
-					//decre nextIndex here
-					rf.nextIndex[server] -= 1
-				}
-				rf.lastHeartTime = time.Now()
+				go rf.syncLogs(server)
 				time.Sleep(100 * time.Millisecond)
 			}
 		}(peer)
@@ -571,6 +541,56 @@ func (rf *Raft) startLeaderControl(){
 
 }
 
+func (rf *Raft) syncLogs(server int) {
+	rf.mu.Lock()
+	prevLogIndex := rf.nextIndex[server] - 1
+	prevLogTerm := rf.raftLog[prevLogIndex].RaftLogTerm
+	referSlice := rf.raftLog[prevLogIndex+1:]
+	entities := make([]Log, len(referSlice))
+	args := EntityArgs{
+		Term: rf.currentTerm, LeaderId: rf.me, LeaderCommit: rf.commitIndex,
+		PrevLogTerm:  prevLogTerm,
+		PrevLogIndex: prevLogIndex,
+		Entities:     entities,
+	}
+	reply := EntityReply{}
+	copy(entities, referSlice)
+
+	rf.mu.Unlock()
+	rf.sendRequestEntity(server, &args, &reply)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if reply.ReplyTerm == 0 {
+		//log.Printf("server %d fail network", server)
+	}else {
+		//log.Printf("%+v %+v, from server %d", args, reply, server)
+	}
+
+	if reply.Success {
+		rf.nextIndex[server] += len(entities)
+		rf.matchIndex[server] = rf.nextIndex[server] - 1
+
+		majorityIndex := rf.getMajorityIndex()
+		//raftLog.Printf("majority %d", majorityIndex)
+		if majorityIndex > rf.commitIndex && rf.raftLog[majorityIndex].RaftLogTerm == rf.currentTerm {
+			rf.commitIndex = majorityIndex
+			//raftLog.Printf("commitIndex %d", rf.commitIndex)
+		}
+
+	} else {
+		if reply.ReplyTerm > rf.currentTerm {
+			rf.transfer2Follower(reply.ReplyTerm, "syncLog response")
+			return
+		}
+		//decre nextIndex here
+		for prevLogIndex > 0 && rf.raftLog[prevLogIndex].RaftLogTerm == args.PrevLogTerm {
+			prevLogIndex -= 1
+		}
+		rf.nextIndex[server] = prevLogIndex+1
+	}
+	rf.lastHeartTime = time.Now()
+}
 
 func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	//raftLog.Printf("server %d receive %+v %d", rf.me, args, rf.currentTerm)
@@ -639,7 +659,7 @@ func (rf *Raft) applyCommit(){
 			rf.apply(rf.raftLog[rf.lastApplied])
 		}
 		rf.mu.Unlock()
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -649,6 +669,8 @@ func (rf *Raft) apply(raftLog Log){
 		Command: raftLog.Command,
 		CommandIndex: raftLog.Index,
 	}
-	log.Printf("server %d apply %+v", rf.me, applyMsg)
+	if applyMsg.Command == 8888 {
+		//log.Printf("server %d apply %+v", rf.me, applyMsg)
+	}
 	rf.applyCh <- applyMsg
 }
