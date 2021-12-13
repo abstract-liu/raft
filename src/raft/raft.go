@@ -457,6 +457,57 @@ func (rf *Raft) startVote(){
 	}
 }
 
+func (rf *Raft) feelHeart() {
+	for {
+		electionTime := rand.Intn(500) + 300
+		nowTime := time.Now()
+		time.Sleep(time.Duration(electionTime) * time.Millisecond)
+
+		rf.mu.Lock()
+		if  rf.lastHeartTime.Before(nowTime) {
+			rf.role = Candidate
+			rf.currentTerm += 1
+			rf.votedFor = rf.me
+			go rf.persist()
+			rf.lastHeartTime = time.Now()
+
+			go rf.startVote()
+		}
+		rf.mu.Unlock()
+	}
+}
+
+
+
+type EntityReply struct {
+	ReplyTerm int
+	Success   bool
+}
+
+type EntityArgs struct {
+	Term int
+	LeaderId int
+	PrevLogIndex int
+	PrevLogTerm int
+	Entities []Log
+	LeaderCommit int
+}
+
+/*
+func (entityArgs *EntityArgs) String() string {
+	var log string
+	for idx := range entityArgs.Entities{
+		log += entityArgs.Entities[idx].String() + ", "
+	}
+	return "LeaderCommit:" + strconv.Itoa(entityArgs.LeaderCommit) +
+		" term:" + strconv.Itoa(entityArgs.Term) +
+		", prevLogIndex:" + strconv.Itoa(entityArgs.PrevLogIndex) +
+		", prevLogTerm:" + strconv.Itoa(entityArgs.PrevLogTerm) +
+		", logEntities: " + log
+}
+*/
+
+
 func (rf *Raft) startLeaderControl(){
 	//raftLog.Printf("server %d start sending heartbeat package", rf.me)
 	rf.nextIndex = make([]int, len(rf.peers))
@@ -520,55 +571,6 @@ func (rf *Raft) startLeaderControl(){
 
 }
 
-func (rf *Raft) feelHeart() {
-	for {
-		electionTime := rand.Intn(500) + 300
-		nowTime := time.Now()
-		time.Sleep(time.Duration(electionTime) * time.Millisecond)
-
-		rf.mu.Lock()
-		if  rf.lastHeartTime.Before(nowTime) {
-			rf.role = Candidate
-			rf.currentTerm += 1
-			rf.votedFor = rf.me
-			go rf.persist()
-			rf.lastHeartTime = time.Now()
-
-			go rf.startVote()
-		}
-		rf.mu.Unlock()
-	}
-}
-
-
-
-type EntityReply struct {
-	ReplyTerm int
-	Success   bool
-}
-
-type EntityArgs struct {
-	Term int
-	LeaderId int
-	PrevLogIndex int
-	PrevLogTerm int
-	Entities []Log
-	LeaderCommit int
-}
-
-/*
-func (entityArgs *EntityArgs) String() string {
-	var log string
-	for idx := range entityArgs.Entities{
-		log += entityArgs.Entities[idx].String() + ", "
-	}
-	return "LeaderCommit:" + strconv.Itoa(entityArgs.LeaderCommit) +
-		" term:" + strconv.Itoa(entityArgs.Term) +
-		", prevLogIndex:" + strconv.Itoa(entityArgs.PrevLogIndex) +
-		", prevLogTerm:" + strconv.Itoa(entityArgs.PrevLogTerm) +
-		", logEntities: " + log
-}
-*/
 
 func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	//raftLog.Printf("server %d receive %+v %d", rf.me, args, rf.currentTerm)
@@ -586,15 +588,6 @@ func (rf *Raft) RequestEntity(args *EntityArgs, reply *EntityReply) {
 	}else if args.Term > rf.currentTerm {
 		rf.transfer2Follower(args.Term, "requestEntity")
 	}
-
-	//heartbeat package
-	/*
-		if args.Entities == nil {
-			//raftLog.Printf("server %d receive heartbeat package from %+v", rf.me, *args)
-			reply.Success = true
-			return
-		}
-	*/
 
 	if args.PrevLogIndex < len(rf.raftLog) && rf.raftLog[args.PrevLogIndex].RaftLogTerm == args.PrevLogTerm {
 		reply.Success = true
@@ -656,6 +649,6 @@ func (rf *Raft) apply(raftLog Log){
 		Command: raftLog.Command,
 		CommandIndex: raftLog.Index,
 	}
-	//log.Printf("server %d apply %+v", rf.me, applyMsg)
+	log.Printf("server %d apply %+v", rf.me, applyMsg)
 	rf.applyCh <- applyMsg
 }
