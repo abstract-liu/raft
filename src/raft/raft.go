@@ -353,14 +353,11 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Index:       len(rf.raftLog),
 	}
 	rf.raftLog = append(rf.raftLog, newLog)
-	rf.mu.Unlock()
-
-	rf.persist()
-
-	rf.mu.Lock()
 	index = len(rf.raftLog)-1
 	rf.matchIndex[rf.me] = index
 	rf.mu.Unlock()
+
+	go rf.persist()
 
 	//log.Printf("start function server receive command %v, index is %d", newLog, index)
 
