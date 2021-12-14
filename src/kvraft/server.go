@@ -3,10 +3,11 @@ package kvraft
 import (
 	"../labgob"
 	"../labrpc"
-	"log"
 	"../raft"
+	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const Debug = 0
@@ -23,6 +24,10 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Key string
+	Value string
+	Operation string
+	Sequence int64
 }
 
 type KVServer struct {
@@ -35,15 +40,57 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	lastSeq int64
+	kvStore map[string]string
+	applyInfo map[int64]chan string
 }
 
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	op := Op{Key: args.Key, Operation: "Get", Sequence: args.Sequence}
+	kv.rf.Start(op)
+	//log.Printf("index:%d term:%d isLeader:%v", index, term, isLeader)
+
+	ch := make(chan string)
+	kv.applyInfo[args.Sequence] = ch
+
+	msg := <-ch
+	if msg == OK {
+		reply.Resp = OK
+		kv.mu.Lock()
+		reply.Value = kv.kvStore[args.Key]
+		kv.mu.Unlock()
+	}
+
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	op := Op{Key: args.Key, Value: args.Value, Operation: args.Op, Sequence: args.Sequence}
+	kv.rf.Start(op)
+	//log.Printf("index:%d term:%d isLeader:%v", index, term, isLeader)
+
+	ch := make(chan string)
+	kv.applyInfo[args.Sequence] = ch
+
+	select {
+	case <-ch:
+		//log.Printf("receive fuck%s", msg)
+		reply.Resp = OK
+	case <-time.After(1 * time.Second):
+		log.Printf("wait time passed")
+	}
 }
 
 //
@@ -96,6 +143,35 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.lastSeq = 0
+	kv.kvStore = make(map[string]string)
+	kv.applyInfo = make(map[int64]chan string)
+	go kv.applyRaftLog()
 
 	return kv
+}
+
+func (kv *KVServer) applyRaftLog(){
+	for {
+		raftLog := <-kv.applyCh
+		kv.mu.Lock()
+		raftOp := raftLog.Command.(Op)
+		switch raftOp.Operation {
+		case "Put":
+			kv.kvStore[raftOp.Key] = raftOp.Value
+			break
+		case "Append":
+			kv.kvStore[raftOp.Key] += raftOp.Value
+			//log.Printf("server append %s", kv.kvStore[raftOp.Key])
+			break
+		}
+
+		//log.Printf("server %d apply log%+v ", kv.me, raftOp )
+		kv.lastSeq = raftOp.Sequence
+		ch, exist := kv.applyInfo[raftOp.Sequence]
+		if exist {
+			ch <- OK
+		}
+		kv.mu.Unlock()
+	}
 }
