@@ -40,32 +40,42 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	lastSeq int64
-	kvStore map[string]string
-	applyInfo map[int64]chan string
+	lastAppliedSeq int64
+	kvStore        map[string]string
+	applyInfo      map[int64]chan string
+	isLeader bool
 }
 
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	if _, isLeader := kv.rf.GetState(); !isLeader {
+		kv.isLeader = false
 		reply.Err = ErrWrongLeader
+		//log.Printf("server %d seq: %d wrong leader", kv.me, args.Sequence)
 		return
 	}
+	//log.Printf("server Get key:%s seq:%d on leader:%d",  args.Key, args.Sequence,  kv.me)
 
 	op := Op{Key: args.Key, Operation: "Get", Sequence: args.Sequence}
 	kv.rf.Start(op)
 	//log.Printf("index:%d term:%d isLeader:%v", index, term, isLeader)
 
 	ch := make(chan string)
+	kv.mu.Lock()
+	kv.isLeader = true
 	kv.applyInfo[args.Sequence] = ch
+	kv.mu.Unlock()
 
-	msg := <-ch
-	if msg == OK {
+	select {
+	case <-ch:
 		reply.Resp = OK
 		kv.mu.Lock()
 		reply.Value = kv.kvStore[args.Key]
 		kv.mu.Unlock()
+	case <-time.After(2 * time.Second):
+		//log.Printf("Get wait time passed")
+		reply.Err = ErrTimeout
 	}
 
 }
@@ -73,23 +83,40 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	if _, isLeader := kv.rf.GetState(); !isLeader {
+		kv.isLeader = false
 		reply.Err = ErrWrongLeader
+		//log.Printf("server %d seq: %d wrong leader", kv.me, args.Sequence)
 		return
 	}
+	//log.Printf("server %s key:%s value:%s seq:%d on leader:%d", args.Op, args.Key, args.Value, args.Sequence, kv.me)
+
+	kv.mu.Lock()
+	_, exist := kv.applyInfo[args.Sequence]
+	if exist {
+		if kv.lastAppliedSeq >= args.Sequence {
+			reply.Resp = OK
+		}
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
 
 	op := Op{Key: args.Key, Value: args.Value, Operation: args.Op, Sequence: args.Sequence}
 	kv.rf.Start(op)
 	//log.Printf("index:%d term:%d isLeader:%v", index, term, isLeader)
 
 	ch := make(chan string)
+	kv.mu.Lock()
+	kv.isLeader = true
 	kv.applyInfo[args.Sequence] = ch
+	kv.mu.Unlock()
 
 	select {
 	case <-ch:
-		//log.Printf("receive fuck%s", msg)
 		reply.Resp = OK
-	case <-time.After(1 * time.Second):
-		log.Printf("wait time passed")
+	case <-time.After(2 * time.Second):
+		//log.Printf("PutAppend wait time passed")
+		reply.Err = ErrTimeout
 	}
 }
 
@@ -143,7 +170,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
-	kv.lastSeq = 0
+	kv.lastAppliedSeq = 0
+	kv.isLeader = false
 	kv.kvStore = make(map[string]string)
 	kv.applyInfo = make(map[int64]chan string)
 	go kv.applyRaftLog()
@@ -166,8 +194,10 @@ func (kv *KVServer) applyRaftLog(){
 			break
 		}
 
-		//log.Printf("server %d apply log%+v ", kv.me, raftOp )
-		kv.lastSeq = raftOp.Sequence
+		if kv.isLeader {
+			log.Printf("server %d apply log%+v ", kv.me, raftOp)
+		}
+		kv.lastAppliedSeq = raftOp.Sequence
 		ch, exist := kv.applyInfo[raftOp.Sequence]
 		if exist {
 			ch <- OK

@@ -45,22 +45,22 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 //
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
-	//log.Printf("client Get key:%s", key)
 	ck.sequence += 1
 	args := GetArgs{Key: key, Sequence: ck.sequence}
 	reply := GetReply{}
 	for {
+		log.Printf("client Get key:%s, seq:%d on leader:%d", key, ck.sequence, ck.leaderId)
 		ok := ck.servers[ck.leaderId].Call("KVServer.Get", &args, &reply)
-		if !ok {
-			log.Printf("call rpc %v", ok)
-		}
-		if reply.Err == ErrWrongLeader {
+
+		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout{
 			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)
+			log.Printf("Get change to leader server:%d", ck.leaderId)
 		}
 		if reply.Resp == OK {
 			break
 		}
 	}
+	log.Printf("client Get key:%s, seq:%d done!!!", key, ck.sequence)
 	return reply.Value
 }
 
@@ -76,22 +76,22 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
-	//log.Printf("client %s key:%s value:%s", op, key, value)
 	ck.sequence += 1
 	args := PutAppendArgs{Key:key, Value: value, Op: op, Sequence: ck.sequence}
 	reply := PutAppendReply{}
 	for {
+		//log.Printf("client %s key:%s seq:%d on leader:%d", op, key, ck.sequence, ck.leaderId)
 		ok := ck.servers[ck.leaderId].Call("KVServer.PutAppend", &args, &reply)
-		if !ok {
-			log.Printf("call rpc %v", ok)
-		}
-		if reply.Err == ErrWrongLeader {
+
+		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout{
 			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)
+			//log.Printf("%s change to leader server:%d", op, ck.leaderId)
 		}
 		if reply.Resp == OK {
 			break
 		}
 	}
+	//log.Printf("%s change to leader server:%d done!!!", op, ck.leaderId)
 }
 
 func (ck *Clerk) Put(key string, value string) {
