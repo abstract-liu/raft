@@ -98,10 +98,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		ok := ck.servers[leaderId].Call("KVServer.PutAppend", &args, &reply)
 		if !ok || reply.Resp != OK {
 			if reply.Resp == ErrNotApplied {
-				//log.Printf("seq:%d send to server:%d, but not applied", seq, leaderId)
+				log.Printf("seq:%d send to server:%d, but not applied", seq, leaderId)
 			} else {
 				leaderId = (leaderId + 1) % len(ck.servers)
-				//log.Printf("seq:%d call rpc err, ok:%v, err:%v, leaderId:%d", seq, ok, reply.Err, leaderId)
+				//log.Printf("seq:%d call rpc err, ok:%v, err:%v, leaderId:%d", seq, ok, reply.Resp, leaderId)
 			}
 		} else {
 			//log.Printf("client %s key:%s seq:%d on leader:%d", op, key, seq, leaderId)

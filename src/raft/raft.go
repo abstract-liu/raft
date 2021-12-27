@@ -449,9 +449,11 @@ func (rf *Raft) startVote(){
 				//log.Printf("server %d receive a vote from server %d, currentTerm: %d", rf.me, server, rf.currentTerm)
 				voteNum += 1
 				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
+					rf.mu.Lock()
 					rf.role = Leader
-					//log.Printf("server %d successive become a leader", rf.me)
-					go rf.startLeaderControl()
+					log.Printf("server %d successive become a leader", rf.me)
+					rf.startLeaderControl()
+					rf.mu.Unlock()
 				}
 			} else {
 				if reply.Term > rf.currentTerm {
@@ -519,14 +521,12 @@ func (rf *Raft) startLeaderControl(){
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 
-	rf.mu.Lock()
 	logLength := len(rf.raftLog)
 	for i := range rf.peers {
 		rf.nextIndex[i] = logLength
 		rf.matchIndex[i] = -1
 	}
 	//log.Printf("log length:%d", logLength)
-	rf.mu.Unlock()
 
 	for peer := range rf.peers {
 		go func(server int) {

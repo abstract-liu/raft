@@ -198,7 +198,7 @@ func (kv *KVServer) applyRaftLog(){
 		}
 
 		if kv.isLeader {
-			//log.Printf("server %d apply log%+v ", kv.me, raftOp)
+			log.Printf("server %d apply log%+v ", kv.me, raftOp)
 		}
 		kv.applySeqs[raftOp.Sequence] = true
 		ch, exist := kv.applyChs[raftOp.Sequence]
