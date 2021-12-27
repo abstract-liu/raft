@@ -428,7 +428,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) startVote(){
 	voteNum := 1
-	log.Printf("server %d pass election time, and start voting now", rf.me)
+	//log.Printf("server %d pass election time, and start voting now", rf.me)
 	for peer := range rf.peers{
 		go func(server int){
 			if server == rf.me {
@@ -450,7 +450,7 @@ func (rf *Raft) startVote(){
 				voteNum += 1
 				if voteNum > len(rf.peers)/2 && rf.role == Candidate {
 					rf.role = Leader
-					log.Printf("server %d successive become a leader", rf.me)
+					//log.Printf("server %d successive become a leader", rf.me)
 					go rf.startLeaderControl()
 				}
 			} else {

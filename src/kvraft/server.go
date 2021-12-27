@@ -74,7 +74,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		reply.Value = kv.kvStore[args.Key]
 		kv.mu.Unlock()
 	case <-time.After(800 * time.Millisecond):
-		log.Printf("Get wait time passed")
+		//log.Printf("Get wait time passed")
 		reply.Resp = ErrTimeout
 	}
 
@@ -118,7 +118,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	case <-ch:
 		reply.Resp = OK
 	case <-time.After(800 * time.Millisecond):
-		log.Printf("PutAppend wait time passed")
+		//log.Printf("PutAppend wait time passed")
 		reply.Resp = ErrTimeout
 	}
 }
@@ -198,7 +198,7 @@ func (kv *KVServer) applyRaftLog(){
 		}
 
 		if kv.isLeader {
-			log.Printf("server %d apply log%+v ", kv.me, raftOp)
+			//log.Printf("server %d apply log%+v ", kv.me, raftOp)
 		}
 		kv.applySeqs[raftOp.Sequence] = true
 		ch, exist := kv.applyChs[raftOp.Sequence]
