@@ -51,7 +51,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		kv.isLeader = false
-		reply.Err = ErrWrongLeader
+		reply.Resp = ErrWrongLeader
 		//log.Printf("server %d seq: %d wrong leader", kv.me, args.Sequence)
 		return
 	}
@@ -73,9 +73,9 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		kv.mu.Lock()
 		reply.Value = kv.kvStore[args.Key]
 		kv.mu.Unlock()
-	case <-time.After(2 * time.Second):
-		//log.Printf("Get wait time passed")
-		reply.Err = ErrTimeout
+	case <-time.After(800 * time.Millisecond):
+		log.Printf("Get wait time passed")
+		reply.Resp = ErrTimeout
 	}
 
 }
@@ -84,7 +84,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		kv.isLeader = false
-		reply.Err = ErrWrongLeader
+		reply.Resp = ErrWrongLeader
 		//log.Printf("server %d seq: %d wrong leader", kv.me, args.Sequence)
 		return
 	}
@@ -95,6 +95,9 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	if exist {
 		if kv.lastAppliedSeq >= args.Sequence {
 			reply.Resp = OK
+		} else {
+			log.Printf("server %d seq: %d exist but not applied", kv.me, args.Sequence)
+			reply.Resp = ErrNotApplied
 		}
 		kv.mu.Unlock()
 		return
@@ -114,9 +117,9 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	select {
 	case <-ch:
 		reply.Resp = OK
-	case <-time.After(2 * time.Second):
-		//log.Printf("PutAppend wait time passed")
-		reply.Err = ErrTimeout
+	case <-time.After(800 * time.Millisecond):
+		log.Printf("PutAppend wait time passed")
+		reply.Resp = ErrTimeout
 	}
 }
 

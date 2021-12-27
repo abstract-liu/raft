@@ -428,7 +428,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) startVote(){
 	voteNum := 1
-	//raftLog.Printf("server %d pass election time, and start voting now", rf.me)
+	log.Printf("server %d pass election time, and start voting now", rf.me)
 	for peer := range rf.peers{
 		go func(server int){
 			if server == rf.me {

@@ -5,6 +5,7 @@ const (
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrTimeout= "ErrTimeout"
+	ErrNotApplied = "ErrNotApplied"
 )
 
 type Err string
@@ -22,7 +23,6 @@ type PutAppendArgs struct {
 
 type PutAppendReply struct {
 	Resp string
-	Err Err
 }
 
 type GetArgs struct {
@@ -33,6 +33,5 @@ type GetArgs struct {
 
 type GetReply struct {
 	Resp string
-	Err   Err
 	Value string
 }
