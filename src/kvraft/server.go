@@ -40,9 +40,9 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	lastAppliedSeq int64
-	kvStore        map[string]string
-	applyInfo      map[int64]chan string
+	applySeqs map[int64]bool
+	kvStore  map[string]string
+	applyChs map[int64]chan string
 	isLeader bool
 }
 
@@ -64,7 +64,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	ch := make(chan string)
 	kv.mu.Lock()
 	kv.isLeader = true
-	kv.applyInfo[args.Sequence] = ch
+	kv.applyChs[args.Sequence] = ch
 	kv.mu.Unlock()
 
 	select {
@@ -91,12 +91,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	//log.Printf("server %s key:%s value:%s seq:%d on leader:%d", args.Op, args.Key, args.Value, args.Sequence, kv.me)
 
 	kv.mu.Lock()
-	_, exist := kv.applyInfo[args.Sequence]
-	if exist {
-		if kv.lastAppliedSeq >= args.Sequence {
+	_, chExist := kv.applyChs[args.Sequence]
+	if chExist {
+		if _, isApplied := kv.applySeqs[args.Sequence]; isApplied {
 			reply.Resp = OK
 		} else {
-			log.Printf("server %d seq: %d exist but not applied", kv.me, args.Sequence)
+			//log.Printf("server %d seq: %d exist but not applied", kv.me, args.Sequence)
 			reply.Resp = ErrNotApplied
 		}
 		kv.mu.Unlock()
@@ -111,7 +111,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	ch := make(chan string)
 	kv.mu.Lock()
 	kv.isLeader = true
-	kv.applyInfo[args.Sequence] = ch
+	kv.applyChs[args.Sequence] = ch
 	kv.mu.Unlock()
 
 	select {
@@ -173,10 +173,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
-	kv.lastAppliedSeq = 0
 	kv.isLeader = false
+	kv.applySeqs = make(map[int64]bool)
 	kv.kvStore = make(map[string]string)
-	kv.applyInfo = make(map[int64]chan string)
+	kv.applyChs = make(map[int64]chan string)
 	go kv.applyRaftLog()
 
 	return kv
@@ -200,8 +200,8 @@ func (kv *KVServer) applyRaftLog(){
 		if kv.isLeader {
 			log.Printf("server %d apply log%+v ", kv.me, raftOp)
 		}
-		kv.lastAppliedSeq = raftOp.Sequence
-		ch, exist := kv.applyInfo[raftOp.Sequence]
+		kv.applySeqs[raftOp.Sequence] = true
+		ch, exist := kv.applyChs[raftOp.Sequence]
 		if exist {
 			ch <- OK
 		}
