@@ -34,10 +34,12 @@ func makeSeed() int64 {
 func random_handles(kvh []*labrpc.ClientEnd) []*labrpc.ClientEnd {
 	sa := make([]*labrpc.ClientEnd, len(kvh))
 	copy(sa, kvh)
+	/*
 	for i := range sa {
 		j := rand.Intn(i + 1)
 		sa[i], sa[j] = sa[j], sa[i]
 	}
+	 */
 	return sa
 }
 

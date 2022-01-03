@@ -3,6 +3,7 @@ package kvraft
 import (
 	"../labrpc"
 	"log"
+	"sync"
 	"time"
 )
 import "crypto/rand"
@@ -12,8 +13,9 @@ import "math/big"
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	leaderId int
+	server   int
 	sequence int64
+	mu       sync.Mutex
 }
 
 func nrand() int64 {
@@ -27,7 +29,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
-	ck.leaderId = 0
+	ck.server = 0
 	ck.sequence = nrand()
 	return ck
 }
@@ -46,31 +48,31 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 //
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
+	ck.mu.Lock()
 	seq := ck.sequence
 	ck.sequence += 1
-
-	leaderId := ck.leaderId
+	server := ck.server
+	ck.mu.Unlock()
 
 	args := GetArgs{Key: key, Sequence: seq}
 	reply := GetReply{}
-	ch := make(chan string)
-	go testTimeout(ch, seq)
+	//log.Printf("client start get %+v on server:%d", args, server)
 	for {
-		ok := ck.servers[leaderId].Call("KVServer.Get", &args, &reply)
+		ok := ck.servers[server].Call("KVServer.Get", &args, &reply)
 		if !ok || reply.Resp != OK {
 			if reply.Resp == ErrNotApplied {
-				//log.Printf("seq:%d send to server:%d, but not applied", seq, leaderId)
+				//log.Printf("seq:%d send to server:%d, but not applied", seq, server)
 			} else {
-				leaderId = (leaderId + 1) % len(ck.servers)
-				//log.Printf("seq:%d call rpc err, ok:%v, err:%v, leader:%d", seq, ok, reply.Err, leaderId)
+				server = (server + 1) % len(ck.servers)
 			}
 		} else {
-			//log.Printf("client Get key:%s, seq:%d on leader:%d", key, seq, leaderId)
-			ck.leaderId = leaderId
+			//log.Printf("client Get key:%s, seq:%d, value:%s on server:%d", key, seq, reply.Value,server)
+			ck.mu.Lock()
+			ck.server = server
+			ck.mu.Unlock()
 			break
 		}
 	}
-	ch <- "successive applied"
 	return reply.Value
 }
 
@@ -86,30 +88,31 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	ck.mu.Lock()
 	seq := ck.sequence
 	ck.sequence += 1
-	leaderId := ck.leaderId
+	server := ck.server
+	ck.mu.Unlock()
 
 	args := PutAppendArgs{Key:key, Value: value, Op: op, Sequence: seq}
 	reply := PutAppendReply{}
-	ch := make(chan string)
-	go testTimeout(ch, seq)
+	//log.Printf("client start %s %+v on server:%d", op, args, server)
 	for {
-		ok := ck.servers[leaderId].Call("KVServer.PutAppend", &args, &reply)
+		ok := ck.servers[server].Call("KVServer.PutAppend", &args, &reply)
 		if !ok || reply.Resp != OK {
 			if reply.Resp == ErrNotApplied {
-				log.Printf("seq:%d send to server:%d, but not applied", seq, leaderId)
+				//log.Printf("seq:%d send to server:%d, but not applied", seq, server)
 			} else {
-				leaderId = (leaderId + 1) % len(ck.servers)
-				//log.Printf("seq:%d call rpc err, ok:%v, err:%v, leaderId:%d", seq, ok, reply.Resp, leaderId)
+				server = (server + 1) % len(ck.servers)
 			}
 		} else {
-			//log.Printf("client %s key:%s seq:%d on leader:%d", op, key, seq, leaderId)
-			ck.leaderId = leaderId
+			//log.Printf("client %s key:%s seq:%d on server:%d", op, key, seq, server)
+			ck.mu.Lock()
+			ck.server = server
+			ck.mu.Unlock()
 			break
 		}
 	}
-	ch <- "successive applied"
 }
 
 func (ck *Clerk) Put(key string, value string) {

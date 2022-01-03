@@ -43,19 +43,34 @@ type KVServer struct {
 	applySeqs map[int64]bool
 	kvStore  map[string]string
 	applyChs map[int64]chan string
-	isLeader bool
 }
 
 
+//这里似乎有问题没办法执行成功或超时操作
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	if _, isLeader := kv.rf.GetState(); !isLeader {
-		kv.isLeader = false
 		reply.Resp = ErrWrongLeader
 		//log.Printf("server %d seq: %d wrong leader", kv.me, args.Sequence)
 		return
 	}
-	//log.Printf("server Get key:%s seq:%d on leader:%d",  args.Key, args.Sequence,  kv.me)
+	//log.Printf("server Get key:%s seq:%d on server:%d",  args.Key, args.Sequence,  kv.me)
+
+	//这里有问题 有大问题 这里有时序问题！！！！！
+	kv.mu.Lock()
+	if value, exist := kv.applySeqs[args.Sequence]; exist && value{
+		reply.Resp = OK
+		//i forget about this fucking thing
+		reply.Value = kv.kvStore[args.Key]
+		kv.mu.Unlock()
+		return
+	} else if exist && !value {
+		//log.Printf("server %d seq: %d exist but not applied", kv.me, args.Sequence)
+		reply.Resp = ErrNotApplied
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
 
 	op := Op{Key: args.Key, Operation: "Get", Sequence: args.Sequence}
 	kv.rf.Start(op)
@@ -63,8 +78,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 	ch := make(chan string)
 	kv.mu.Lock()
-	kv.isLeader = true
 	kv.applyChs[args.Sequence] = ch
+	kv.applySeqs[args.Sequence] = false
 	kv.mu.Unlock()
 
 	select {
@@ -73,32 +88,33 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		kv.mu.Lock()
 		reply.Value = kv.kvStore[args.Key]
 		kv.mu.Unlock()
-	case <-time.After(800 * time.Millisecond):
-		//log.Printf("Get wait time passed")
+	case <-time.After(3 * time.Second):
+		log.Printf("Get wait time passed")
 		reply.Resp = ErrTimeout
 	}
 
 }
-
+//有一种情况，就是server 接受到了rpc， 加入了其state， 但是这时候断网了
+//然后server 又重新选举变成了leader， 但由于没有新的在他这个任期内的消息
+//导致这一条信息没办法提交成功
+//对应的情形就是 ErrNotApplied 因为client 是顺序的执行
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	if _, isLeader := kv.rf.GetState(); !isLeader {
-		kv.isLeader = false
 		reply.Resp = ErrWrongLeader
 		//log.Printf("server %d seq: %d wrong leader", kv.me, args.Sequence)
 		return
 	}
-	//log.Printf("server %s key:%s value:%s seq:%d on leader:%d", args.Op, args.Key, args.Value, args.Sequence, kv.me)
+	//log.Printf("server %s key:%s value:%s seq:%d on server:%d", args.Op, args.Key, args.Value, args.Sequence, kv.me)
 
 	kv.mu.Lock()
-	_, chExist := kv.applyChs[args.Sequence]
-	if chExist {
-		if _, isApplied := kv.applySeqs[args.Sequence]; isApplied {
-			reply.Resp = OK
-		} else {
-			//log.Printf("server %d seq: %d exist but not applied", kv.me, args.Sequence)
-			reply.Resp = ErrNotApplied
-		}
+	if value, exist := kv.applySeqs[args.Sequence]; exist && value{
+		reply.Resp = OK
+		kv.mu.Unlock()
+		return
+	} else if exist && !value {
+		//log.Printf("server %d seq: %d exist but not applied", kv.me, args.Sequence)
+		reply.Resp = ErrNotApplied
 		kv.mu.Unlock()
 		return
 	}
@@ -110,15 +126,15 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	ch := make(chan string)
 	kv.mu.Lock()
-	kv.isLeader = true
 	kv.applyChs[args.Sequence] = ch
+	kv.applySeqs[args.Sequence] = false
 	kv.mu.Unlock()
 
 	select {
 	case <-ch:
 		reply.Resp = OK
-	case <-time.After(800 * time.Millisecond):
-		//log.Printf("PutAppend wait time passed")
+	case <-time.After(3 * time.Second):
+		log.Printf("PutAppend wait time passed %d", args.Sequence)
 		reply.Resp = ErrTimeout
 	}
 }
@@ -173,7 +189,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
-	kv.isLeader = false
 	kv.applySeqs = make(map[int64]bool)
 	kv.kvStore = make(map[string]string)
 	kv.applyChs = make(map[int64]chan string)
@@ -197,11 +212,12 @@ func (kv *KVServer) applyRaftLog(){
 			break
 		}
 
-		if kv.isLeader {
-			log.Printf("server %d apply log%+v ", kv.me, raftOp)
+		if _, isLeader := kv.rf.GetState(); isLeader{
+			//log.Printf("server %d apply log%+v ", kv.me, raftOp)
 		}
 		kv.applySeqs[raftOp.Sequence] = true
 		ch, exist := kv.applyChs[raftOp.Sequence]
+		// 这里存在如果超时卡住的问题
 		if exist {
 			ch <- OK
 		}
