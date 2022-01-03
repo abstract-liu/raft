@@ -76,7 +76,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.rf.Start(op)
 	//log.Printf("index:%d term:%d isLeader:%v", index, term, isLeader)
 
-	ch := make(chan string)
+	ch := make(chan string, 1)
 	kv.mu.Lock()
 	kv.applyChs[args.Sequence] = ch
 	kv.applySeqs[args.Sequence] = false
@@ -124,7 +124,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.rf.Start(op)
 	//log.Printf("index:%d term:%d isLeader:%v", index, term, isLeader)
 
-	ch := make(chan string)
+	ch := make(chan string, 1)
 	kv.mu.Lock()
 	kv.applyChs[args.Sequence] = ch
 	kv.applySeqs[args.Sequence] = false
@@ -219,7 +219,12 @@ func (kv *KVServer) applyRaftLog(){
 		ch, exist := kv.applyChs[raftOp.Sequence]
 		// 这里存在如果超时卡住的问题
 		if exist {
-			ch <- OK
+			select {
+				case ch <- OK:
+					//log.Printf("fuck")
+				case <- time.After(3 * time.Second):
+					//log.Printf("fuck")
+			}
 		}
 		kv.mu.Unlock()
 	}
