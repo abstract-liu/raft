@@ -86,6 +86,7 @@ func checkClntAppends(t *testing.T, clnt int, v string, count int) {
 		}
 		off1 := strings.LastIndex(v, wanted)
 		if off1 != off {
+			t.Fatalf("duplicate value %v", v)
 			t.Fatalf("duplicate element %v in Append result", wanted)
 		}
 		if off <= lastoff {

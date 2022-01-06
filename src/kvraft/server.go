@@ -11,6 +11,8 @@ import (
 )
 
 const Debug = 0
+//todo: 存在如果断开前最后一个无法apply 的问题，我们需要想一下这个该如何解决
+
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -122,7 +124,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	op := Op{Key: args.Key, Value: args.Value, Operation: args.Op, Sequence: args.Sequence}
 	kv.rf.Start(op)
-	//log.Printf("index:%d term:%d isLeader:%v", index, term, isLeader)
+	log.Printf("server %s key:%s value:%s seq:%d on server:%d", args.Op, args.Key, args.Value, args.Sequence, kv.me)
 
 	ch := make(chan string, 1)
 	kv.mu.Lock()
@@ -201,6 +203,14 @@ func (kv *KVServer) applyRaftLog(){
 	for {
 		raftLog := <-kv.applyCh
 		kv.mu.Lock()
+		commandValid := raftLog.CommandValid
+		if !commandValid {
+			op := Op{Operation: "Start"}
+			kv.rf.Start(op)
+			kv.mu.Unlock()
+			continue
+		}
+
 		raftOp := raftLog.Command.(Op)
 		switch raftOp.Operation {
 		case "Put":
@@ -213,7 +223,7 @@ func (kv *KVServer) applyRaftLog(){
 		}
 
 		if _, isLeader := kv.rf.GetState(); isLeader{
-			//log.Printf("server %d apply log%+v ", kv.me, raftOp)
+			log.Printf("server %d apply log%+v ", kv.me, raftOp)
 		}
 		kv.applySeqs[raftOp.Sequence] = true
 		ch, exist := kv.applyChs[raftOp.Sequence]

@@ -453,6 +453,7 @@ func (rf *Raft) startVote(){
 					rf.role = Leader
 					log.Printf("server %d successive become a leader", rf.me)
 					rf.startLeaderControl()
+					rf.leaderApply()
 					rf.mu.Unlock()
 				}
 			} else {
@@ -684,6 +685,13 @@ func (rf *Raft) apply(raftLog Log){
 	}
 	if applyMsg.Command == 8888 {
 		//log.Printf("server %d apply %+v", rf.me, applyMsg)
+	}
+	rf.applyCh <- applyMsg
+}
+
+func (rf *Raft) leaderApply(){
+	applyMsg := ApplyMsg{
+		CommandValid: false,
 	}
 	rf.applyCh <- applyMsg
 }
