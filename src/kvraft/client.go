@@ -60,7 +60,7 @@ func (ck *Clerk) Get(key string) string {
 	for {
 		ok := ck.servers[server].Call("KVServer.Get", &args, &reply)
 		if !ok || reply.Resp != OK {
-			if reply.Resp == ErrNotApplied {
+			if reply.Resp == ErrNotApplied || reply.Resp == ErrNotReady{
 				//log.Printf("seq:%d send to server:%d, but not applied", seq, server)
 			} else {
 				server = (server + 1) % len(ck.servers)
@@ -100,7 +100,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for {
 		ok := ck.servers[server].Call("KVServer.PutAppend", &args, &reply)
 		if !ok || reply.Resp != OK {
-			if reply.Resp == ErrNotApplied {
+			if reply.Resp == ErrNotApplied || reply.Resp == ErrNotReady {
 				//log.Printf("seq:%d send to server:%d, but not applied", seq, server)
 			} else {
 				server = (server + 1) % len(ck.servers)

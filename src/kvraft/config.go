@@ -1,6 +1,9 @@
 package kvraft
 
-import "../labrpc"
+import (
+	"../labrpc"
+	"log"
+)
 import "testing"
 import "os"
 
@@ -258,6 +261,7 @@ func (cfg *config) ShutdownServer(i int) {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
 
+	log.Printf("shutdown server %d", i)
 	cfg.disconnectUnlocked(i, cfg.All())
 
 	// disable client connections to the server.

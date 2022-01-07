@@ -13,6 +13,7 @@ import (
 const Debug = 0
 //todo: 存在如果断开前最后一个无法apply 的问题，我们需要想一下这个该如何解决
 //fixed: 上一个无法apply ，新leader 产生后，会主动发一条apply 信息
+// 存在问题：leader A 的没有commit, 然后 leaderB 又来了
 
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
@@ -21,7 +22,6 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	}
 	return
 }
-
 
 type Op struct {
 	// Your definitions here.
@@ -46,6 +46,8 @@ type KVServer struct {
 	applySeqs map[int64]bool
 	kvStore  map[string]string
 	applyChs map[int64]chan string
+	ready bool
+	serverSeq int64
 }
 
 
@@ -55,6 +57,10 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Resp = ErrWrongLeader
 		//log.Printf("server %d seq: %d wrong leader", kv.me, args.Sequence)
+		return
+	}
+	if !kv.ready {
+		reply.Resp = ErrNotReady
 		return
 	}
 	//log.Printf("server Get key:%s seq:%d on server:%d",  args.Key, args.Sequence,  kv.me)
@@ -108,6 +114,11 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		//log.Printf("server %d seq: %d wrong leader", kv.me, args.Sequence)
 		return
 	}
+	if !kv.ready {
+		reply.Resp = ErrNotReady
+		return
+	}
+
 	//log.Printf("server %s key:%s value:%s seq:%d on server:%d", args.Op, args.Key, args.Value, args.Sequence, kv.me)
 
 	kv.mu.Lock()
@@ -121,14 +132,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		kv.mu.Unlock()
 		return
 	}
-	kv.mu.Unlock()
 
 	op := Op{Key: args.Key, Value: args.Value, Operation: args.Op, Sequence: args.Sequence}
 	kv.rf.Start(op)
 	//log.Printf("server %s key:%s value:%s seq:%d on server:%d", args.Op, args.Key, args.Value, args.Sequence, kv.me)
 
 	ch := make(chan string, 1)
-	kv.mu.Lock()
 	kv.applyChs[args.Sequence] = ch
 	kv.applySeqs[args.Sequence] = false
 	kv.mu.Unlock()
@@ -195,6 +204,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applySeqs = make(map[int64]bool)
 	kv.kvStore = make(map[string]string)
 	kv.applyChs = make(map[int64]chan string)
+	kv.ready = false
 	go kv.applyRaftLog()
 
 	return kv
@@ -206,7 +216,9 @@ func (kv *KVServer) applyRaftLog(){
 		kv.mu.Lock()
 		commandValid := raftLog.CommandValid
 		if !commandValid {
-			op := Op{Operation: "Start"}
+			serverSeq := nrand()
+			kv.serverSeq = serverSeq
+			op := Op{Operation: "Start", Sequence: serverSeq}
 			kv.rf.Start(op)
 			kv.mu.Unlock()
 			continue
@@ -220,6 +232,14 @@ func (kv *KVServer) applyRaftLog(){
 		case "Append":
 			kv.kvStore[raftOp.Key] += raftOp.Value
 			//log.Printf("server append %s", kv.kvStore[raftOp.Key])
+			break
+
+			//这里还要加上seq 判断是不是最后一个
+		case "Start" :
+			if raftOp.Sequence == kv.serverSeq {
+				kv.ready = true
+				//log.Printf("server %d is ready", kv.me)
+			}
 			break
 		}
 
